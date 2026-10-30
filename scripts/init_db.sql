@@ -9,4 +9,9 @@ CREATE USER IF NOT EXISTS 'library_app'@'localhost' IDENTIFIED BY 'change-me';
 ALTER USER 'library_app'@'localhost' IDENTIFIED BY 'change-me';
 GRANT ALL PRIVILEGES ON library_robot.* TO 'library_app'@'localhost';
 
+-- 테스트 전용 DB (pytest가 사용. 개발 데이터와 섞이지 않도록 분리)
+CREATE DATABASE IF NOT EXISTS library_robot_test
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+GRANT ALL PRIVILEGES ON library_robot_test.* TO 'library_app'@'localhost';
+
 FLUSH PRIVILEGES;
