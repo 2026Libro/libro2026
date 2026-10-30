@@ -11,7 +11,18 @@ from fastapi import FastAPI
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.watchdog import run_task_watchdog
-from app.routers import books, copies, health, observations, robots, scan_sessions, shelves, tasks, verifications
+from app.routers import (
+    basket,
+    books,
+    copies,
+    health,
+    observations,
+    robots,
+    scan_sessions,
+    shelves,
+    tasks,
+    verifications,
+)
 
 
 @asynccontextmanager
@@ -35,3 +46,4 @@ app.include_router(observations.router)
 app.include_router(verifications.router)
 app.include_router(robots.router)
 app.include_router(tasks.router)
+app.include_router(basket.router)

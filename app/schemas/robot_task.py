@@ -58,25 +58,27 @@ class RobotTaskCommand(BaseModel):
 class TaskCreate(BaseModel):
     """관리자 작업 생성.
 
-    - MOVE_TO_SHELF : shelf_id
-    - SCAN_SHELF    : shelf_id (스캔 세션이 자동으로 만들어진다)
-    - REOBSERVE_BOOK: verification_id (재관측 대기 상태인 검증 결과)
-    인출(RETRIEVE_MISPLACED_BOOK)은 관리자 승인 절차가 필요해 8단계에서 별도 API로 만든다.
+    - MOVE_TO_SHELF           : shelf_id
+    - SCAN_SHELF              : shelf_id (스캔 세션이 자동으로 만들어진다)
+    - REOBSERVE_BOOK          : verification_id (재관측 대기 상태인 검증 결과)
+    - RETRIEVE_MISPLACED_BOOK : verification_id (오배가 확정 결과). PENDING_APPROVAL로 만들어지며
+                                POST /tasks/{id}/approve 로 승인해야 로봇에 전달된다.
     취소는 POST /tasks/{id}/cancel 을 쓴다.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    task_type: Literal[RobotTaskType.MOVE_TO_SHELF, RobotTaskType.SCAN_SHELF, RobotTaskType.REOBSERVE_BOOK]
+    task_type: Literal[RobotTaskType.MOVE_TO_SHELF, RobotTaskType.SCAN_SHELF, RobotTaskType.REOBSERVE_BOOK,
+                       RobotTaskType.RETRIEVE_MISPLACED_BOOK]
     robot_id: RobotId
     shelf_id: ShelfId | None = None
     verification_id: int | None = None
 
     @model_validator(mode="after")
     def _check_fields(self) -> "TaskCreate":
-        if self.task_type is RobotTaskType.REOBSERVE_BOOK:
+        if self.task_type in (RobotTaskType.REOBSERVE_BOOK, RobotTaskType.RETRIEVE_MISPLACED_BOOK):
             if self.verification_id is None:
-                raise ValueError("REOBSERVE_BOOK 작업에는 verification_id가 필요합니다.")
+                raise ValueError(f"{self.task_type} 작업에는 verification_id가 필요합니다.")
         elif self.shelf_id is None:
             raise ValueError(f"{self.task_type} 작업에는 shelf_id가 필요합니다.")
         return self
@@ -100,7 +102,11 @@ class TaskAck(_RobotReport):
 class TaskResultReport(_RobotReport):
     status: Literal[RobotTaskStatus.IN_PROGRESS, RobotTaskStatus.COMPLETED,
                     RobotTaskStatus.FAILED, RobotTaskStatus.CANCELLED]
-    event_type: str | None = Field(default=None, max_length=50, description="세부 단계 이름. 예: ARRIVED, CAPTURED")
+    event_type: str | None = Field(
+        default=None, max_length=50,
+        description="세부 단계 이름. 예: ARRIVED. 인출 작업은 GRIPPED(파지), STORED_IN_BASKET(바구니 보관)을 보고하면 "
+                    "도서 물리 위치가 갱신된다.",
+    )
     message: str | None = Field(default=None, max_length=1000)
     payload: dict[str, Any] | None = None
 
@@ -130,13 +136,22 @@ class TaskRead(BaseModel):
     scan_session_id: str | None
     reobservation_of: str | None
     target_task_id: str | None
+    verification_id: int | None
     created_by: str
+    approved_by: str | None
+    approved_at: UtcDatetime | None
     accepted_at: UtcDatetime | None
     started_at: UtcDatetime | None
     finished_at: UtcDatetime | None
     result_message: str | None
     created_at: UtcDatetime
     updated_at: UtcDatetime
+
+
+class TaskReject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=500, description="거절 사유 (관리자 처리 이력에 기록)")
 
 
 class TaskDetail(TaskRead):

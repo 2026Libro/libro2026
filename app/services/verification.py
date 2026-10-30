@@ -6,6 +6,7 @@
 - 미관측은 분실이 아니다. 대출 중·인출된 책은 검토 대상에서 뺀다.
 - 재관측 대기 판정이 나오면 (auto_reobservation 설정 시) 촬영한 로봇에 REOBSERVE_BOOK 작업을 자동 생성한다.
   재관측 횟수가 한도를 넘으면 REVIEW_REQUIRED가 되므로 무한 반복되지 않는다.
+- 오배가 확정이면 (auto_retrieval_request 설정 시) 인출 요청을 PENDING_APPROVAL로 만든다. 승인은 관리자가 한다.
 - 관리자 알림 생성은 9단계에서 이 결과를 보고 한다.
 """
 from dataclasses import dataclass
@@ -29,11 +30,14 @@ from app.db.base import utcnow
 from app.models import BookCopy, BookLocation, Observation, ObservationCandidate, ScanSession, ShelfSlot, VerificationResult
 from app.schemas.common import ErrorCode
 from app.schemas.verification import UnobservedCheckResult
+from app.services import retrieval
 from app.services.robot_task import create_reobservation_task
 
 _MISPLACED = (LocationVerdict.MISPLACED_SUSPECTED, LocationVerdict.MISPLACED_CONFIRMED)
-# 서가에 없는 게 당연한 물리 위치 (인출되어 로봇·바구니·직원에게 있음)
-_OFF_SHELF = (PhysicalLocationType.ROBOT_GRIPPER, PhysicalLocationType.BASKET, PhysicalLocationType.COLLECTED_BY_STAFF)
+# 로봇이 들고 있는 상태 (그리퍼·바구니). 서가 관측으로 덮어쓰지 않는다.
+_HELD_BY_ROBOT = (PhysicalLocationType.ROBOT_GRIPPER, PhysicalLocationType.BASKET)
+# 서가에 없는 게 당연한 물리 위치 (인출되어 로봇·바구니·직원에게 있음). 미관측 검토에서 제외한다.
+_OFF_SHELF = (*_HELD_BY_ROBOT, PhysicalLocationType.COLLECTED_BY_STAFF)
 
 
 @dataclass(frozen=True)
@@ -43,11 +47,12 @@ class Thresholds:
     min_identification: float
     max_reobservations: int
     auto_reobservation: bool = False
+    auto_retrieval_request: bool = False
 
     @classmethod
     def from_settings(cls, s: Settings) -> "Thresholds":
         return cls(s.verify_min_detection, s.verify_min_ocr, s.verify_min_identification, s.verify_max_reobservations,
-                   s.auto_reobservation)
+                   s.auto_reobservation, s.auto_retrieval_request)
 
 
 # ---------- 1. 도서 식별 (DB 없이 판단하는 순수 함수) ----------
@@ -78,8 +83,9 @@ def _registered_slots(db: Session, copy_ids: list[str]) -> dict[str, str | None]
 
 def _update_physical_location(copy: BookCopy, obs: Observation, notes: list[str]) -> None:
     """확실히 식별된 관측은 '로봇 카메라로 확인한 위치'이므로 물리 위치를 확정으로 갱신한다."""
-    if copy.physical_location_type in _OFF_SHELF:
-        # 인출 처리 중인 책이 서가에서 보였다면 기록이 어긋난 것. 자동으로 덮어쓰지 않는다.
+    if copy.physical_location_type in _HELD_BY_ROBOT:
+        # 로봇이 들고 있어야 할 책이 서가에서 보였다면 기록이 어긋난 것. 자동으로 덮어쓰지 않는다.
+        # (직원이 회수한 책은 다시 꽂아 둘 수 있으므로 서가 관측으로 갱신한다)
         notes.append(f"물리 위치가 {copy.physical_location_type}인데 서가에서 관측됨 (물리 위치는 갱신하지 않음)")
         return
     if copy.physical_location_confirmed_at and copy.physical_location_confirmed_at >= obs.captured_at:
@@ -163,6 +169,8 @@ def verify_observation(db: Session, obs: Observation, th: Thresholds) -> Verific
 
     if workflow is WorkflowStatus.REOBSERVATION_PENDING and th.auto_reobservation:
         create_reobservation_task(db, result, obs.robot_id, created_by="system")
+    if verdict is LocationVerdict.MISPLACED_CONFIRMED and th.auto_retrieval_request:
+        retrieval.try_create_request(db, result, obs.robot_id)  # 승인 대기로만 생성됨
     return result
 
 

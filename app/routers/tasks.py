@@ -1,6 +1,6 @@
 """로봇 작업 API.
 
-- 관리자: 생성, 취소, 조회
+- 관리자: 생성, 인출 승인·거절, 취소, 조회
 - 로봇  : 수락(ack), 결과 보고(result) — 자기 작업만
 """
 from fastapi import APIRouter, Depends, Query, status
@@ -12,7 +12,16 @@ from app.core.security import require_admin, require_device
 from app.db.session import get_db
 from app.models import DeviceCredential, RobotTask
 from app.schemas.common import Page
-from app.schemas.robot_task import TaskAck, TaskCreate, TaskDetail, TaskEventRead, TaskRead, TaskResultReport
+from app.schemas.robot_task import (
+    TaskAck,
+    TaskCreate,
+    TaskDetail,
+    TaskEventRead,
+    TaskRead,
+    TaskReject,
+    TaskResultReport,
+)
+from app.services import retrieval as retrieval_service
 from app.services import robot_task as task_service
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -25,7 +34,11 @@ def _detail(db: Session, task: RobotTask) -> TaskDetail:
 
 @router.post("", response_model=TaskDetail, status_code=status.HTTP_201_CREATED)
 def create_task(data: TaskCreate, db: Session = Depends(get_db), admin_id: str = Depends(require_admin)):
-    """작업 생성 (MOVE_TO_SHELF, SCAN_SHELF, REOBSERVE_BOOK). 생성 즉시 PENDING이 되어 로봇이 가져갈 수 있다."""
+    """작업 생성.
+
+    - MOVE_TO_SHELF, SCAN_SHELF, REOBSERVE_BOOK: 바로 PENDING이 되어 로봇이 가져갈 수 있다.
+    - RETRIEVE_MISPLACED_BOOK: 안전 조건 검사 후 PENDING_APPROVAL로 생성된다. 승인(/approve) 전에는 로봇에 전달되지 않는다.
+    """
     return _detail(db, task_service.create_task(db, data, admin_id))
 
 
@@ -66,3 +79,16 @@ def report_result(task_id: str, data: TaskResultReport, db: Session = Depends(ge
 def cancel_task(task_id: str, db: Session = Depends(get_db), admin_id: str = Depends(require_admin)):
     """작업 취소. 로봇이 아직 수락하지 않았으면 바로 취소되고, 실행 중이면 로봇에 취소 명령(CANCEL_TASK)을 보낸다."""
     return _detail(db, task_service.cancel_task(db, task_id, admin_id))
+
+
+@router.post("/{task_id}/approve", response_model=TaskDetail)
+def approve_retrieval(task_id: str, db: Session = Depends(get_db), admin_id: str = Depends(require_admin)):
+    """인출 승인. 안전 조건을 다시 검사하고, 통과하면 PENDING이 되어 로봇이 가져갈 수 있다."""
+    return _detail(db, retrieval_service.approve(db, task_id, admin_id))
+
+
+@router.post("/{task_id}/reject", response_model=TaskDetail)
+def reject_retrieval(task_id: str, data: TaskReject, db: Session = Depends(get_db),
+                     admin_id: str = Depends(require_admin)):
+    """인출 거절 (사유 필수). 로봇으로 인출하지 않고 사람이 직접 처리하는 것으로 본다."""
+    return _detail(db, retrieval_service.reject(db, task_id, admin_id, data.reason))

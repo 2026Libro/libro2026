@@ -4,7 +4,7 @@
     .venv\\Scripts\\python -m scripts.mock_robot --robot-key <R001 키>
 
 동작: 상태 보고 → 결과 불명 작업이 있으면 결과 재보고 → 작업 가져가기 → 수락 → 진행 → 완료 를
-할 작업이 없을 때까지 반복한다.
+할 작업이 없을 때까지 반복한다. 인출 작업은 GRIPPED → STORED_IN_BASKET 단계를 보고한다.
 
 --mode fail   : 수락 후 실패(FAILED)로 보고
 --mode vanish : 수락·진행 보고 후 아무것도 하지 않고 종료 (통신 끊김 흉내)
@@ -84,6 +84,10 @@ def main() -> None:
                 continue
             if cmd["task_type"] in ("SCAN_SHELF", "REOBSERVE_BOOK"):
                 print("    (촬영 완료. 실제로는 이 이미지를 AI가 분석해 /observations 로 보낸다)")
+            if cmd["task_type"] == "RETRIEVE_MISPLACED_BOOK":
+                print(f"    {cmd['book_copy_id']} 인출 중")
+                _report(http, cmd["task_id"], "IN_PROGRESS", event_type="GRIPPED")           # 그리퍼로 집음
+                _report(http, cmd["task_id"], "IN_PROGRESS", event_type="STORED_IN_BASKET")  # 바구니에 넣음
             _report(http, cmd["task_id"], "COMPLETED")
 
 

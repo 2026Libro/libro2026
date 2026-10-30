@@ -30,6 +30,7 @@ from app.models import AdminAction, Observation, Robot, RobotTask, ScanSession, 
 from app.models.robot import ACTIVE_TASK_STATUSES
 from app.schemas.common import ErrorCode
 from app.schemas.robot_task import RobotTaskCommand, TaskAck, TaskCreate, TaskResultReport
+from app.services import retrieval  # 인출 작업 후속 처리 (retrieval도 이 모듈을 쓰므로 모듈 단위로 import)
 from app.services import robot as robot_service
 
 
@@ -53,7 +54,7 @@ def _invalid_state(message: str) -> AppError:
     return AppError(ErrorCode.INVALID_STATE, message, status_code=409)
 
 
-def _add_event(db: Session, task: RobotTask, event_type: str, source: EventSource, from_status: RobotTaskStatus | None,
+def add_event(db: Session, task: RobotTask, event_type: str, source: EventSource, from_status: RobotTaskStatus | None,
                to_status: RobotTaskStatus | None, payload: dict | None = None, idempotency_key: str | None = None,
                occurred_at=None) -> None:
     db.add(TaskEvent(task_id=task.id, event_type=event_type, source=source, from_status=from_status,
@@ -61,12 +62,14 @@ def _add_event(db: Session, task: RobotTask, event_type: str, source: EventSourc
                      occurred_at=occurred_at or utcnow()))
 
 
-def _new_task(db: Session, task_type: RobotTaskType, robot_id: str, created_by: str, **fields) -> RobotTask:
-    task = RobotTask(id=_new_task_id(), task_type=task_type, status=S.PENDING, robot_id=robot_id,
+def new_task(db: Session, task_type: RobotTaskType, robot_id: str, created_by: str,
+             status: RobotTaskStatus = S.PENDING, **fields) -> RobotTask:
+    """작업 생성 + CREATED 이벤트 (commit은 호출한 쪽에서). 인출 작업은 status=PENDING_APPROVAL로 만든다."""
+    task = RobotTask(id=_new_task_id(), task_type=task_type, status=status, robot_id=robot_id,
                      created_by=created_by, **fields)
     db.add(task)
     db.flush()
-    _add_event(db, task, "CREATED", EventSource.ADMIN if created_by != "system" else EventSource.BACKEND, None, S.PENDING)
+    add_event(db, task, "CREATED", EventSource.ADMIN if created_by != "system" else EventSource.BACKEND, None, status)
     return task
 
 
@@ -102,6 +105,9 @@ def list_tasks(db: Session, robot_id: str | None, status: RobotTaskStatus | None
 def create_task(db: Session, data: TaskCreate, admin_id: str) -> RobotTask:
     robot_service.get_robot(db, data.robot_id)
 
+    if data.task_type is RobotTaskType.RETRIEVE_MISPLACED_BOOK:
+        return retrieval.create_request_by_admin(db, data.verification_id, data.robot_id, admin_id)
+
     if data.task_type is RobotTaskType.REOBSERVE_BOOK:
         verification = db.get(VerificationResult, data.verification_id)
         if verification is None:
@@ -122,7 +128,7 @@ def create_task(db: Session, data: TaskCreate, admin_id: str) -> RobotTask:
             db.add(session)
             db.flush()
             fields["scan_session_id"] = session.id
-        task = _new_task(db, data.task_type, data.robot_id, created_by=admin_id, **fields)
+        task = new_task(db, data.task_type, data.robot_id, created_by=admin_id, **fields)
 
     db.commit()
     return task
@@ -140,7 +146,7 @@ def create_reobservation_task(db: Session, verification: VerificationResult, rob
     if duplicate:
         raise _invalid_state(f"이 관측에 대한 재관측 작업 '{duplicate}'가 이미 진행 중입니다.")
     # [가정] 재관측 결과는 원래 관측과 같은 스캔 세션으로 보낸다 (AI가 관측에 넣을 scan_session_id를 명령에 포함).
-    return _new_task(db, RobotTaskType.REOBSERVE_BOOK, robot_id, created_by=created_by,
+    return new_task(db, RobotTaskType.REOBSERVE_BOOK, robot_id, created_by=created_by,
                      shelf_id=obs.shelf_id, slot_id=obs.slot_id, book_copy_id=verification.book_copy_id,
                      scan_session_id=obs.scan_session_id, reobservation_of=obs.id)
 
@@ -214,7 +220,7 @@ def acknowledge(db: Session, task_id: str, robot_id: str, data: TaskAck) -> Robo
     else:
         task.status, task.finished_at, task.result_message = S.FAILED, now, f"로봇이 거절: {data.reason or '사유 없음'}"
         event_type = "REJECTED"
-    _add_event(db, task, event_type, EventSource.ROBOT, S.PENDING, task.status, {"reason": data.reason},
+    add_event(db, task, event_type, EventSource.ROBOT, S.PENDING, task.status, {"reason": data.reason},
                data.idempotency_key, _to_utc(data.reported_at))
     _on_task_finished(db, task)
     db.commit()
@@ -246,8 +252,9 @@ def report_result(db: Session, task_id: str, robot_id: str, data: TaskResultRepo
     payload = {"message": data.message, **(data.payload or {})}
     if from_status is S.UNKNOWN:
         payload["recovered_from_unknown"] = True
-    _add_event(db, task, data.event_type or data.status.value, EventSource.ROBOT, from_status, data.status,
+    add_event(db, task, data.event_type or data.status.value, EventSource.ROBOT, from_status, data.status,
                payload, data.idempotency_key, _to_utc(data.reported_at))
+    retrieval.on_robot_report(db, task, data.event_type, _to_utc(data.reported_at))
     _on_task_finished(db, task)
     db.commit()
     return task
@@ -269,6 +276,8 @@ def _on_task_finished(db: Session, task: RobotTask) -> None:
     # (완료된 경우는 AI 결과를 기다리며, 오지 않으면 expire_missing_reobservation_results가 처리)
     if task.task_type is RobotTaskType.REOBSERVE_BOOK and task.status is not S.COMPLETED:
         _send_reobservation_to_review(db, task, f"재관측 작업 {task.id}이(가) {task.status}로 끝남")
+
+    retrieval.on_task_finished(db, task)
 
 
 def _send_reobservation_to_review(db: Session, task: RobotTask, reason: str) -> bool:
@@ -299,7 +308,7 @@ def cancel_task(db: Session, task_id: str, admin_id: str) -> RobotTask:
 
     if from_status in (S.PENDING_APPROVAL, S.PENDING):
         task.status, task.finished_at, task.result_message = S.CANCELLED, utcnow(), f"관리자 취소 ({admin_id})"
-        _add_event(db, task, "CANCELLED", EventSource.ADMIN, from_status, S.CANCELLED, {"admin_id": admin_id})
+        add_event(db, task, "CANCELLED", EventSource.ADMIN, from_status, S.CANCELLED, {"admin_id": admin_id})
         _on_task_finished(db, task)
     elif from_status in (*RUNNING, S.UNKNOWN):
         if task.task_type is RobotTaskType.CANCEL_TASK:
@@ -310,8 +319,8 @@ def cancel_task(db: Session, task_id: str, admin_id: str) -> RobotTask:
         ))
         if existing:
             raise _invalid_state(f"이미 취소 명령 '{existing}'이 전달 대기 중입니다.")
-        cancel = _new_task(db, RobotTaskType.CANCEL_TASK, task.robot_id, created_by=admin_id, target_task_id=task.id)
-        _add_event(db, task, "CANCEL_REQUESTED", EventSource.ADMIN, from_status, from_status,
+        cancel = new_task(db, RobotTaskType.CANCEL_TASK, task.robot_id, created_by=admin_id, target_task_id=task.id)
+        add_event(db, task, "CANCEL_REQUESTED", EventSource.ADMIN, from_status, from_status,
                    {"admin_id": admin_id, "cancel_task_id": cancel.id})
     else:
         raise _invalid_state(f"이미 끝난 작업입니다 ({from_status}).")
@@ -338,7 +347,7 @@ def mark_unresponsive(db: Session, timeout_seconds: int) -> list[str]:
         .with_for_update(of=RobotTask)
     ))
     for task in tasks:
-        _add_event(db, task, "MARKED_UNKNOWN", EventSource.BACKEND, task.status, S.UNKNOWN,
+        add_event(db, task, "MARKED_UNKNOWN", EventSource.BACKEND, task.status, S.UNKNOWN,
                    {"reason": f"로봇 무응답 {timeout_seconds}초 초과"})
         task.status = S.UNKNOWN
 
@@ -376,7 +385,7 @@ def expire_missing_reobservation_results(db: Session, wait_seconds: int) -> list
     expired = []
     for task in tasks:
         if _send_reobservation_to_review(db, task, f"재관측 작업 {task.id} 완료 후 {wait_seconds}초 동안 AI 결과 없음"):
-            _add_event(db, task, "REOBSERVATION_RESULT_MISSING", EventSource.BACKEND, task.status, task.status,
+            add_event(db, task, "REOBSERVATION_RESULT_MISSING", EventSource.BACKEND, task.status, task.status,
                        {"wait_seconds": wait_seconds})
             expired.append(task.id)
     db.commit()

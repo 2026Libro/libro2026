@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     verify_min_identification: float = 0.8   # AI가 보낸 book_copy_id를 IDENTIFIED로 인정하는 최소값
     verify_max_reobservations: int = 2       # 재관측을 이만큼 해도 해결되지 않으면 관리자 검토
     auto_reobservation: bool = True          # 재관측 대기 판정이 나오면 REOBSERVE_BOOK 작업을 자동 생성
+    # 오배가 확정 시 인출 요청(PENDING_APPROVAL)을 자동 생성. 승인 전에는 로봇에 전달되지 않는다.
+    auto_retrieval_request: bool = True
     # [가정] 로봇이 재관측 촬영을 끝낸 뒤 AI 결과를 기다리는 최대 시간. 지나면 관리자 검토로 넘긴다.
     reobservation_result_wait_seconds: int = 300
 

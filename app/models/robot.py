@@ -55,6 +55,8 @@ class RobotTask(TimestampMixin, Base):
     scan_session_id: Mapped[str | None] = mapped_column(ForeignKey("scan_sessions.id"))
     reobservation_of: Mapped[str | None] = mapped_column(ForeignKey("observations.id"))
     target_task_id: Mapped[str | None] = mapped_column(ForeignKey("robot_tasks.id"))  # CANCEL_TASK 대상
+    # 이 작업의 근거가 된 검증 결과 (인출 요청은 오배가 확정 결과에서 만들어진다)
+    verification_id: Mapped[int | None] = mapped_column(ForeignKey("verification_results.id"))
 
     created_by: Mapped[str] = mapped_column(String(100))  # "system" 또는 관리자 ID
     approved_by: Mapped[str | None] = mapped_column(String(100))

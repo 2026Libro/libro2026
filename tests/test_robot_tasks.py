@@ -90,7 +90,7 @@ def test_create_task_is_pending_with_event(client, env):
 
 
 @pytest.mark.parametrize("payload, status", [
-    ({"task_type": "RETRIEVE_MISPLACED_BOOK", "robot_id": "R900", "shelf_id": "T-01"}, 422),  # 8단계 전용
+    ({"task_type": "RETRIEVE_MISPLACED_BOOK", "robot_id": "R900", "shelf_id": "T-01"}, 422),  # verification_id 필요
     ({"task_type": "CANCEL_TASK", "robot_id": "R900", "shelf_id": "T-01"}, 422),              # cancel API 사용
     ({"task_type": "MOVE_TO_SHELF", "robot_id": "R900"}, 422),                                # 서가 없음
     ({"task_type": "MOVE_TO_SHELF", "robot_id": "R999", "shelf_id": "T-01"}, 404),
