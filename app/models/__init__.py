@@ -1,8 +1,32 @@
 """ORM 모델 모음.
 
-3단계(DB 설계)에서 books, shelves 등의 모델을 추가하면 여기서 import 해야
-Alembic autogenerate가 테이블을 인식한다.
+새 모델 파일을 만들면 여기서 import 해야 Alembic autogenerate가 테이블을 인식한다.
 """
 from app.db.base import Base
+from app.models.admin import AdminAction, Alert
+from app.models.book import Book, BookCopy, BookLocation, BookLocationHistory
+from app.models.device import DeviceCredential
+from app.models.observation import Observation, ObservationCandidate, ScanSession, VerificationResult
+from app.models.robot import BasketItem, Robot, RobotTask, TaskEvent
+from app.models.shelf import Shelf, ShelfSlot
 
-__all__ = ["Base"]
+__all__ = [
+    "Base",
+    "AdminAction",
+    "Alert",
+    "BasketItem",
+    "Book",
+    "BookCopy",
+    "BookLocation",
+    "BookLocationHistory",
+    "DeviceCredential",
+    "Observation",
+    "ObservationCandidate",
+    "Robot",
+    "RobotTask",
+    "ScanSession",
+    "Shelf",
+    "ShelfSlot",
+    "TaskEvent",
+    "VerificationResult",
+]

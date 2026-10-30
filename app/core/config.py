@@ -20,6 +20,30 @@ class Settings(BaseSettings):
     db_password: str
     db_name: str
 
+    # [가정] 프론트엔드 로그인 방식이 정해지기 전까지 쓰는 관리자 토큰. 형식: "관리자ID:토큰,관리자ID2:토큰2"
+    admin_tokens: str = ""
+
+    # [가정] 위치 검증 임계값. AI 담당자와 협의 후 .env에서 조정한다.
+    verify_min_detection: float = 0.5        # 이보다 낮으면 책등 탐지 자체를 믿지 않음 → FAILED
+    verify_min_ocr: float = 0.6              # 이보다 낮으면 읽은 글자를 믿지 않음
+    verify_min_identification: float = 0.8   # AI가 보낸 book_copy_id를 IDENTIFIED로 인정하는 최소값
+    verify_max_reobservations: int = 2       # 재관측을 이만큼 해도 해결되지 않으면 관리자 검토
+    auto_reobservation: bool = True          # 재관측 대기 판정이 나오면 REOBSERVE_BOOK 작업을 자동 생성
+
+    # [가정] 로봇 통신 기준. 로봇 담당자와 상태 보고 주기를 협의 후 조정한다.
+    robot_offline_after_seconds: int = 60    # 마지막 통신 후 이 시간이 지나면 OFFLINE, 진행 중 작업은 UNKNOWN
+    task_watchdog_interval_seconds: int = 10 # 위 검사를 서버가 몇 초마다 할지
+
+    @property
+    def admin_token_map(self) -> dict[str, str]:
+        """{토큰: 관리자ID}"""
+        result = {}
+        for pair in self.admin_tokens.split(","):
+            admin_id, sep, token = pair.strip().partition(":")
+            if sep and admin_id and token:
+                result[token] = admin_id
+        return result
+
     @property
     def database_url(self) -> URL:
         # URL.create를 쓰면 비밀번호에 @, %, # 등 특수문자가 있어도 안전하게 처리된다.
