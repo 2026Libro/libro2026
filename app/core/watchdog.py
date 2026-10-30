@@ -1,13 +1,16 @@
-"""서버 실행 중 주기적으로 로봇 통신 끊김을 검사하는 백그라운드 작업.
+"""서버 실행 중 주기적으로 도는 백그라운드 검사.
 
-uvicorn으로 서버를 실행하면 자동으로 시작된다. (테스트에서는 실행되지 않으며, 테스트는 mark_unresponsive를 직접 호출한다)
+- 로봇 통신 끊김 → 진행 중 작업 UNKNOWN
+- 재관측 촬영 완료 후 AI 결과 누락 → 관리자 검토
+
+uvicorn으로 서버를 실행하면 자동으로 시작된다. (테스트에서는 실행되지 않으며, 테스트는 각 함수를 직접 호출한다)
 """
 import asyncio
 import logging
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal
-from app.services.robot_task import mark_unresponsive
+from app.services.robot_task import expire_missing_reobservation_results, mark_unresponsive
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,8 @@ def _check_once() -> None:
     with SessionLocal() as db:
         if marked := mark_unresponsive(db, settings.robot_offline_after_seconds):
             logger.warning("로봇 무응답으로 결과 불명(UNKNOWN) 처리한 작업: %s", marked)
+        if expired := expire_missing_reobservation_results(db, settings.reobservation_result_wait_seconds):
+            logger.warning("재관측 AI 결과가 오지 않아 관리자 검토로 넘긴 작업: %s", expired)
 
 
 async def run_task_watchdog() -> None:

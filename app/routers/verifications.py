@@ -15,6 +15,7 @@ router = APIRouter(prefix="/verifications", tags=["verifications"])
 @router.get("", response_model=Page[VerificationRead])
 def list_verifications(
     scan_session_id: str | None = Query(default=None),
+    observation_id: str | None = Query(default=None),
     book_copy_id: str | None = Query(default=None, pattern=BOOK_COPY_ID_PATTERN),
     identification_status: IdentificationStatus | None = None,
     location_verdict: LocationVerdict | None = None,
@@ -27,6 +28,7 @@ def list_verifications(
     """최신순. 예: 오배가 의심만 → location_verdict=MISPLACED_SUSPECTED, 관리자 검토 대상 → workflow_status=REVIEW_REQUIRED"""
     filters = {
         "scan_session_id": scan_session_id,
+        "observation_id": observation_id,
         "book_copy_id": book_copy_id,
         "identification_status": identification_status,
         "location_verdict": location_verdict,

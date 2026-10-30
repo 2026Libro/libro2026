@@ -6,6 +6,7 @@
 - 통신이 끊기면 진행 중 작업을 FAILED가 아니라 UNKNOWN으로 둔다.
 - UNKNOWN 작업은 자동으로 다시 PENDING으로 돌리거나 재전송하지 않는다. 로봇이 실제 결과를 보고해야 끝난다.
 - 같은 보고가 재전송되면(idempotency_key 동일) 한 번만 처리한다.
+- 재관측 작업이 실패·취소되거나, 완료 후에도 AI 결과가 오지 않으면 재관측 대기에 멈춰 두지 않고 관리자 검토로 넘긴다.
 """
 import secrets
 from datetime import UTC, timedelta
@@ -215,7 +216,7 @@ def acknowledge(db: Session, task_id: str, robot_id: str, data: TaskAck) -> Robo
         event_type = "REJECTED"
     _add_event(db, task, event_type, EventSource.ROBOT, S.PENDING, task.status, {"reason": data.reason},
                data.idempotency_key, _to_utc(data.reported_at))
-    _finish_scan_session_if_needed(db, task)
+    _on_task_finished(db, task)
     db.commit()
     return task
 
@@ -247,19 +248,39 @@ def report_result(db: Session, task_id: str, robot_id: str, data: TaskResultRepo
         payload["recovered_from_unknown"] = True
     _add_event(db, task, data.event_type or data.status.value, EventSource.ROBOT, from_status, data.status,
                payload, data.idempotency_key, _to_utc(data.reported_at))
-    _finish_scan_session_if_needed(db, task)
+    _on_task_finished(db, task)
     db.commit()
     return task
 
 
-def _finish_scan_session_if_needed(db: Session, task: RobotTask) -> None:
-    """스캔 작업이 끝나면 연결된 스캔 세션도 종료한다. 완료가 아니면 INCOMPLETE (미관측 판정 안 함)."""
-    if task.task_type is not RobotTaskType.SCAN_SHELF or task.status not in TERMINAL or not task.scan_session_id:
+def _on_task_finished(db: Session, task: RobotTask) -> None:
+    """작업이 끝났을 때 연결된 데이터 후속 처리."""
+    if task.status not in TERMINAL:
         return
-    session = db.get(ScanSession, task.scan_session_id)
-    if session.status is ScanSessionStatus.IN_PROGRESS:
-        session.status = ScanSessionStatus.COMPLETED if task.status is S.COMPLETED else ScanSessionStatus.INCOMPLETE
-        session.finished_at = utcnow()
+
+    # 스캔 작업 → 스캔 세션 종료. 완료가 아니면 INCOMPLETE (미관측 판정 안 함)
+    if task.task_type is RobotTaskType.SCAN_SHELF and task.scan_session_id:
+        session = db.get(ScanSession, task.scan_session_id)
+        if session.status is ScanSessionStatus.IN_PROGRESS:
+            session.status = ScanSessionStatus.COMPLETED if task.status is S.COMPLETED else ScanSessionStatus.INCOMPLETE
+            session.finished_at = utcnow()
+
+    # 재관측 작업이 실패·거절·취소 → 재관측 대기에서 멈추지 않도록 관리자 검토로 넘긴다.
+    # (완료된 경우는 AI 결과를 기다리며, 오지 않으면 expire_missing_reobservation_results가 처리)
+    if task.task_type is RobotTaskType.REOBSERVE_BOOK and task.status is not S.COMPLETED:
+        _send_reobservation_to_review(db, task, f"재관측 작업 {task.id}이(가) {task.status}로 끝남")
+
+
+def _send_reobservation_to_review(db: Session, task: RobotTask, reason: str) -> bool:
+    verification = db.scalar(select(VerificationResult).where(
+        VerificationResult.observation_id == task.reobservation_of,
+        VerificationResult.workflow_status == WorkflowStatus.REOBSERVATION_PENDING,
+    ))
+    if verification is None:
+        return False  # 이미 재관측 결과가 왔거나 다른 처리가 된 경우
+    verification.workflow_status = WorkflowStatus.REVIEW_REQUIRED
+    verification.note = f"{verification.note}; {reason}" if verification.note else reason
+    return True
 
 
 def _to_utc(dt):
@@ -279,7 +300,7 @@ def cancel_task(db: Session, task_id: str, admin_id: str) -> RobotTask:
     if from_status in (S.PENDING_APPROVAL, S.PENDING):
         task.status, task.finished_at, task.result_message = S.CANCELLED, utcnow(), f"관리자 취소 ({admin_id})"
         _add_event(db, task, "CANCELLED", EventSource.ADMIN, from_status, S.CANCELLED, {"admin_id": admin_id})
-        _finish_scan_session_if_needed(db, task)
+        _on_task_finished(db, task)
     elif from_status in (*RUNNING, S.UNKNOWN):
         if task.task_type is RobotTaskType.CANCEL_TASK:
             raise _invalid_state("취소 명령 자체는 취소할 수 없습니다.")
@@ -330,3 +351,33 @@ def mark_unresponsive(db: Session, timeout_seconds: int) -> list[str]:
         db.rollback()  # 그 사이 로봇이 보고해 상태가 바뀜 → 다음 검사에서 다시 판단
         return []
     return [t.id for t in tasks]
+
+
+# ---------- 재관측 결과 누락 감시 ----------
+
+def expire_missing_reobservation_results(db: Session, wait_seconds: int) -> list[str]:
+    """로봇이 재관측 촬영을 완료했는데 wait_seconds가 지나도 AI 재관측 결과가 없으면 관리자 검토로 넘긴다.
+
+    이후에 결과가 늦게 와도 버리지 않고 평소대로 판정한다 (verify_observation이 원래 결과를 CLOSED로 바꿈).
+    """
+    cutoff = utcnow() - timedelta(seconds=wait_seconds)
+    result_arrived = select(Observation.id).where(Observation.reobservation_of == RobotTask.reobservation_of).exists()
+    tasks = list(db.scalars(
+        select(RobotTask)
+        .join(VerificationResult, VerificationResult.observation_id == RobotTask.reobservation_of)
+        .where(
+            RobotTask.task_type == RobotTaskType.REOBSERVE_BOOK,
+            RobotTask.status == S.COMPLETED,
+            RobotTask.finished_at < cutoff,
+            VerificationResult.workflow_status == WorkflowStatus.REOBSERVATION_PENDING,
+            ~result_arrived,
+        )
+    ))
+    expired = []
+    for task in tasks:
+        if _send_reobservation_to_review(db, task, f"재관측 작업 {task.id} 완료 후 {wait_seconds}초 동안 AI 결과 없음"):
+            _add_event(db, task, "REOBSERVATION_RESULT_MISSING", EventSource.BACKEND, task.status, task.status,
+                       {"wait_seconds": wait_seconds})
+            expired.append(task.id)
+    db.commit()
+    return expired

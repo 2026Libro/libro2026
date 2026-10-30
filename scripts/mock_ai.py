@@ -8,6 +8,8 @@
   이어서 AI 입장에서 분석 완료를 알려 미관측 판정까지 실행한다.
 - 마지막에 이 세션의 검증 결과(식별·위치 판정·처리 흐름)를 표로 출력한다.
 - --last (또는 같은 --session-id)로 다시 실행하면 같은 observation_id가 재전송되므로 중복 방지(200 응답)를 확인할 수 있다.
+- --reobserve : 로봇이 완료한 재관측 작업(REOBSERVE_BOOK)마다 재관측 분석 결과를 보낸다.
+  (순서: mock_ai → mock_robot → mock_ai --reobserve)
 
 시나리오는 scripts/seed_sample_data.py 의 샘플 데이터를 기준으로 한다.
 """
@@ -34,6 +36,13 @@ SCENARIOS = [
      []),
 ]
 
+# 재관측 결과 (칸별). 여기에 없는 칸은 다시 인식 실패로 보낸다.
+REOBSERVE_RESULTS = {
+    "A-03-05": ("같은 책 재확인 → 오배가 확정", "로봇공학 입문", "BOOK-201", (0.98, 0.93, 0.91), [("BOOK-201", 0.91)]),
+    "A-03-04": ("선명하게 다시 읽음", "데이터베이스 개론", "BOOK-128", (0.97, 0.92, 0.90), [("BOOK-128", 0.90)]),
+}
+REOBSERVE_FAILED = ("다시 찍어도 인식 실패", None, None, (0.85, 0.05, 0.0), [])
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="모의 AI 관측 전송")
@@ -42,9 +51,14 @@ def main() -> None:
     parser.add_argument("--robot-key", help="R001 로봇 키 (주면 촬영 종료 + 분석 완료 → 미관측 판정까지 실행)")
     parser.add_argument("--session-id", help="기존 스캔 세션 ID (없으면 새로 생성)")
     parser.add_argument("--last", action="store_true", help="가장 최근 스캔 세션으로 다시 전송 (중복 방지 확인용)")
+    parser.add_argument("--reobserve", action="store_true", help="완료된 재관측 작업에 대한 재관측 결과 전송")
     args = parser.parse_args()
 
     with httpx.Client(base_url=args.base_url, timeout=10) as http:
+        if args.reobserve:
+            _send_reobservations(http, args.ai_key)
+            return
+
         session_id = args.session_id or (_latest_session(http) if args.last else _create_session(http))
         print(f"스캔 세션: {session_id}\n")
 
@@ -100,6 +114,44 @@ def _print_verifications(http: httpx.Client, session_id: str) -> None:
     for v in sorted(res.json()["items"], key=lambda v: v["id"]):
         print(f"  {v['observed_slot_id'] or '-':8} {v['book_copy_id'] or '-':11} {v['identification_status'] or '-':15} "
               f"{v['location_verdict']:20} {v['workflow_status'] or '-':22} {v['note'] or ''}")
+
+
+def _send_reobservations(http: httpx.Client, ai_key: str) -> None:
+    res = http.get("/tasks", params={"task_type": "REOBSERVE_BOOK", "status": "COMPLETED", "limit": 100})
+    res.raise_for_status()
+    sent = 0
+    for task in res.json()["items"]:
+        original_id = task["reobservation_of"]
+        pending = http.get("/verifications", params={"observation_id": original_id}).json()["items"]
+        if not pending or pending[0]["workflow_status"] != "REOBSERVATION_PENDING":
+            continue  # 이미 재관측 결과를 보냈거나 다른 처리가 끝남
+
+        original = http.get(f"/observations/{original_id}").json()
+        title, text, copy_id, (det, ocr, ident), candidates = REOBSERVE_RESULTS.get(original["slot_id"], REOBSERVE_FAILED)
+        obs_id = f"{original_id}-R"
+        captured = datetime.fromisoformat(original["captured_at"]) + timedelta(minutes=10)
+        res = http.post("/observations", headers={"X-API-Key": ai_key}, json={
+            "observation_id": obs_id,
+            "scan_session_id": original["scan_session_id"],  # 원래 관측과 같은 세션
+            "robot_id": original["robot_id"],
+            "shelf_id": original["shelf_id"],
+            "slot_id": original["slot_id"],
+            "detected_text": text,
+            "book_copy_id": copy_id,
+            "confidence": {"detection": det, "ocr": ocr, "identification": ident},
+            "candidates": [{"book_copy_id": c, "score": s} for c, s in candidates],
+            "reobservation_of": original_id,
+            "image_ref": f"images/{obs_id}.jpg",
+            "captured_at": captured.astimezone(KST).isoformat(),
+        })
+        if res.status_code not in (200, 201):
+            print(f"[{res.status_code}] {obs_id}: {res.text}")
+            continue
+        v = http.get("/verifications", params={"observation_id": obs_id}).json()["items"][0]
+        print(f"[{res.status_code}] {original['slot_id']} {title}: "
+              f"{v['identification_status']} / {v['location_verdict']} / {v['workflow_status'] or '-'}")
+        sent += 1
+    print(f"\n재관측 결과 {sent}건 전송." if sent else "보낼 재관측 결과가 없습니다. (mock_robot으로 재관측 작업을 먼저 완료하세요)")
 
 
 def _latest_session(http: httpx.Client) -> str:
