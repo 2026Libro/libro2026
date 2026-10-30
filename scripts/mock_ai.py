@@ -129,7 +129,7 @@ def _send_reobservations(http: httpx.Client, ai_key: str) -> None:
         original = http.get(f"/observations/{original_id}").json()
         title, text, copy_id, (det, ocr, ident), candidates = REOBSERVE_RESULTS.get(original["slot_id"], REOBSERVE_FAILED)
         obs_id = f"{original_id}-R"
-        captured = datetime.fromisoformat(original["captured_at"]) + timedelta(minutes=10)
+        captured = datetime.fromisoformat(task["finished_at"])  # 로봇이 재촬영을 마친 시각
         res = http.post("/observations", headers={"X-API-Key": ai_key}, json={
             "observation_id": obs_id,
             "scan_session_id": original["scan_session_id"],  # 원래 관측과 같은 세션

@@ -111,12 +111,15 @@ class ScanSessionStatus(StrEnum):
 class AlertType(StrEnum):
     """관리자 알림 종류 (BE-013). [가정]"""
 
-    MISPLACED_SUSPECTED = "MISPLACED_SUSPECTED"
-    RECOGNITION_FAILED = "RECOGNITION_FAILED"
-    NOT_OBSERVED = "NOT_OBSERVED"
+    MISPLACED_SUSPECTED = "MISPLACED_SUSPECTED"        # 재관측을 반복해도 의심 상태
+    MISPLACED_CONFIRMED = "MISPLACED_CONFIRMED"        # 오배가 확정
+    RECOGNITION_FAILED = "RECOGNITION_FAILED"          # 인식 실패·불확실 반복
+    NOT_OBSERVED = "NOT_OBSERVED"                      # 스캔 완료 범위에서 미관측
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"                # 기타 확인 필요 (미등록 도서, 대출 중 도서 관측 등)
+    RETRIEVAL_APPROVAL_REQUIRED = "RETRIEVAL_APPROVAL_REQUIRED"  # 인출 승인 대기
     TASK_FAILED = "TASK_FAILED"
     TASK_RESULT_UNKNOWN = "TASK_RESULT_UNKNOWN"
-    COMMUNICATION_ERROR = "COMMUNICATION_ERROR"
+    COMMUNICATION_ERROR = "COMMUNICATION_ERROR"        # 로봇 통신 끊김
 
 
 class AlertStatus(StrEnum):

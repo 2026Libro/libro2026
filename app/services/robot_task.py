@@ -112,9 +112,12 @@ def create_task(db: Session, data: TaskCreate, admin_id: str) -> RobotTask:
         verification = db.get(VerificationResult, data.verification_id)
         if verification is None:
             raise AppError(ErrorCode.NOT_FOUND, f"검증 결과 {data.verification_id}를 찾을 수 없습니다.", status_code=404)
-        if verification.workflow_status is not WorkflowStatus.REOBSERVATION_PENDING or verification.observation_id is None:
-            raise _invalid_state("재관측 대기(REOBSERVATION_PENDING) 상태인 관측 검증 결과만 재관측할 수 있습니다.")
+        reobservable = (WorkflowStatus.REOBSERVATION_PENDING, WorkflowStatus.REVIEW_REQUIRED)
+        if verification.workflow_status not in reobservable or verification.observation_id is None:
+            raise _invalid_state("재관측 대기 또는 관리자 검토 상태인 관측 검증 결과만 재관측할 수 있습니다.")
         task = create_reobservation_task(db, verification, data.robot_id, created_by=admin_id)
+        # 관리자가 검토 후 다시 찍어 보기로 한 경우 (재관측 한도와 관계없이 관리자 판단으로 1회 더)
+        verification.workflow_status = WorkflowStatus.REOBSERVATION_PENDING
         db.add(AdminAction(admin_id=admin_id, action_type=AdminActionType.REQUEST_REOBSERVATION, task_id=task.id,
                            book_copy_id=verification.book_copy_id, comment=f"검증 결과 {verification.id}"))
     else:

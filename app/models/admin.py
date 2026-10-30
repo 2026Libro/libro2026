@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import AdminActionType, AlertStatus, AlertType
 from app.db.base import Base, TimestampMixin, UtcDateTime, enum_type, utcnow
@@ -22,8 +22,12 @@ class Alert(TimestampMixin, Base):
     robot_id: Mapped[str | None] = mapped_column(ForeignKey("robots.id"))
     task_id: Mapped[str | None] = mapped_column(ForeignKey("robot_tasks.id"))
 
-    acknowledged_by: Mapped[str | None] = mapped_column(String(100))
+    acknowledged_by: Mapped[str | None] = mapped_column(String(100))  # 확인·해결한 사람 ("system" = 자동 해결)
     acknowledged_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+
+    # 새로 만든 검증 결과처럼 아직 id가 없는 대상에도 연결할 수 있도록 관계를 둔다.
+    verification: Mapped["VerificationResult | None"] = relationship("VerificationResult")  # noqa: F821
+    task: Mapped["RobotTask | None"] = relationship("RobotTask")  # noqa: F821
 
 
 class AdminAction(Base):

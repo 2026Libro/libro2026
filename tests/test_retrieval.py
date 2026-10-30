@@ -216,7 +216,7 @@ def test_full_retrieval_and_collection(client, db, env, approved):
     assert copy_state(client)["physical_location_type"] == "BASKET"
     robot(client, env, f"/tasks/{approved}/result", status="COMPLETED")
 
-    basket = client.get("/basket-items").json()
+    basket = client.get("/basket-items", params={"robot_id": "R900"}).json()
     assert [(b["book_copy_id"], b["task_id"]) for b in basket] == [("BOOK-900201", approved)]  # 중복 기록 없음
     assert client.get("/verifications", params={"book_copy_id": "BOOK-900201", "location_verdict":
                       "MISPLACED_CONFIRMED"}).json()["items"][0]["workflow_status"] == "APPROVED"
@@ -224,8 +224,8 @@ def test_full_retrieval_and_collection(client, db, env, approved):
     res = client.post(f"/basket-items/{basket[0]['id']}/collect", headers=ADMIN_HEADERS)
     assert res.json()["collected_by"] == "tester"
     assert copy_state(client)["physical_location_type"] == "COLLECTED_BY_STAFF"
-    assert client.get("/basket-items").json() == []
-    assert len(client.get("/basket-items", params={"include_collected": True}).json()) == 1
+    assert client.get("/basket-items", params={"robot_id": "R900"}).json() == []
+    assert len(client.get("/basket-items", params={"robot_id": "R900", "include_collected": True}).json()) == 1
     v = client.get(f"/tasks/{approved}").json()["verification_id"]
     assert client.get(f"/verifications/{v}").json()["workflow_status"] == "CLOSED"
     assert client.post(f"/basket-items/{basket[0]['id']}/collect", headers=ADMIN_HEADERS).status_code == 409
@@ -235,7 +235,7 @@ def test_completed_without_store_event_still_recorded_in_basket(client, env, app
     start(client, env, approved)
     robot(client, env, f"/tasks/{approved}/result", status="COMPLETED")
     assert copy_state(client)["physical_location_type"] == "BASKET"
-    assert len(client.get("/basket-items").json()) == 1
+    assert len(client.get("/basket-items", params={"robot_id": "R900"}).json()) == 1
 
 
 def test_failure_keeps_last_confirmed_location(client, db, env, approved):
@@ -249,7 +249,7 @@ def test_failure_keeps_last_confirmed_location(client, db, env, approved):
     assert v["workflow_status"] == "REVIEW_REQUIRED"
     assert "FAILED" in v["note"] and "ROBOT_GRIPPER" in v["note"]
     assert client.get("/robots/R900/tasks/next", headers=env["robot"]).status_code == 204  # 자동 재시도 없음
-    assert client.get("/basket-items").json() == []
+    assert client.get("/basket-items", params={"robot_id": "R900"}).json() == []
 
 
 def test_failure_before_grip_keeps_shelf_location(client, env, approved):
@@ -288,7 +288,7 @@ def test_cancelled_request_goes_to_review(client, db, env):
 def test_reshelved_book_location_updated_by_next_scan(client, env, approved):
     start(client, env, approved)
     robot(client, env, f"/tasks/{approved}/result", status="COMPLETED")
-    client.post(f"/basket-items/{client.get('/basket-items').json()[0]['id']}/collect", headers=ADMIN_HEADERS)
+    client.post(f"/basket-items/{client.get('/basket-items', params={'robot_id': 'R900'}).json()[0]['id']}/collect", headers=ADMIN_HEADERS)
 
     session = client.post("/scan-sessions", json={"robot_id": "R900", "shelf_id": "T-02"},
                           headers=ADMIN_HEADERS).json()["id"]

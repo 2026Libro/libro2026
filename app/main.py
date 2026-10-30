@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.watchdog import run_task_watchdog
 from app.routers import (
+    admin,
     basket,
     books,
     copies,
@@ -47,3 +48,4 @@ app.include_router(verifications.router)
 app.include_router(robots.router)
 app.include_router(tasks.router)
 app.include_router(basket.router)
+app.include_router(admin.router)
