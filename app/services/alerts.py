@@ -14,7 +14,7 @@
 원인이 해소되면 (검증 결과가 검토 상태를 벗어남, 승인 대기·결과 불명에서 벗어남, 로봇 재연결)
 열려 있는 알림을 RESOLVED로 자동 처리한다 (acknowledged_by="system").
 """
-from sqlalchemy import event, func, inspect, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from app.core.enums import (
@@ -29,7 +29,7 @@ from app.core.enums import (
     WorkflowStatus,
 )
 from app.core.errors import AppError
-from app.db.base import utcnow
+from app.db.base import attribute_change, utcnow
 from app.models import AdminAction, Alert, Robot, RobotTask, VerificationResult
 from app.schemas.common import ErrorCode
 
@@ -37,16 +37,6 @@ OPEN_STATUSES = (AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED)
 
 
 # ---------- 상태 변화 감지 ----------
-
-def _changed(obj, attr: str):
-    """이번 저장에서 attr 값이 바뀌었으면 (이전 값, 새 값), 아니면 None."""
-    history = inspect(obj).attrs[attr].history
-    if not history.added:
-        return None
-    new = history.added[0]
-    old = history.deleted[0] if history.deleted else None
-    return None if old == new else (old, new)
-
 
 def _add(session: Session, alert_type: AlertType, message: str, **target) -> None:
     session.add(Alert(alert_type=alert_type, message=message[:500], **target))
@@ -76,7 +66,7 @@ def _verification_alert(v: VerificationResult) -> tuple[AlertType, str]:
 
 
 def _on_verification(session: Session, v: VerificationResult) -> None:
-    if not (change := _changed(v, "workflow_status")):
+    if not (change := attribute_change(v, "workflow_status")):
         return
     old, new = change
     if new is WorkflowStatus.REVIEW_REQUIRED:
@@ -87,7 +77,7 @@ def _on_verification(session: Session, v: VerificationResult) -> None:
 
 
 def _on_task(session: Session, task: RobotTask) -> None:
-    if not (change := _changed(task, "status")):
+    if not (change := attribute_change(task, "status")):
         return
     old, new = change
     target = {"task": task, "robot_id": task.robot_id, "book_copy_id": task.book_copy_id}
@@ -108,7 +98,7 @@ def _on_task(session: Session, task: RobotTask) -> None:
 
 
 def _on_robot(session: Session, robot: Robot) -> None:
-    if not (change := _changed(robot, "connection_status")):
+    if not (change := attribute_change(robot, "connection_status")):
         return
     old, new = change
     is_comm = (Alert.robot_id == robot.id, Alert.alert_type == AlertType.COMMUNICATION_ERROR)

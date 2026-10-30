@@ -5,7 +5,7 @@ Alembic은 Base.metadata를 보고 테이블 변경사항을 감지한다.
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, MetaData
+from sqlalchemy import DateTime, Enum, MetaData, inspect
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -50,3 +50,13 @@ def enum_type(enum_cls: type[StrEnum]) -> Enum:
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
+
+
+def attribute_change(obj, attr: str):
+    """이번 저장(flush)에서 obj.attr 값이 바뀌었으면 (이전 값, 새 값), 아니면 None. 새로 만든 객체는 (None, 값)."""
+    history = inspect(obj).attrs[attr].history
+    if not history.added:
+        return None
+    new = history.added[0]
+    old = history.deleted[0] if history.deleted else None
+    return None if old == new else (old, new)

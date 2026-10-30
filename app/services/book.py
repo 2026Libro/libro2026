@@ -146,3 +146,23 @@ def get_location_history(db: Session, copy_id: str) -> list[BookLocationHistory]
         .where(BookLocationHistory.book_copy_id == copy_id)
         .order_by(BookLocationHistory.changed_at, BookLocationHistory.id)
     ))
+
+
+def list_copies(db: Session, filters: dict, shelf_id: str | None, q: str | None,
+                limit: int, offset: int) -> tuple[list[BookCopy], int]:
+    """복본 목록. 등록 위치의 서가(shelf_id), 제목·복본 ID 검색(q), 대출 상태·물리 위치 필터."""
+    stmt = select(BookCopy).join(Book, Book.id == BookCopy.book_id)
+    for field, value in filters.items():
+        if value is not None:
+            stmt = stmt.where(getattr(BookCopy, field) == value)
+    if shelf_id:
+        stmt = (stmt.join(BookLocation, BookLocation.book_copy_id == BookCopy.id)
+                .join(ShelfSlot, ShelfSlot.id == BookLocation.slot_id).where(ShelfSlot.shelf_id == shelf_id))
+    if q:
+        stmt = stmt.where(or_(Book.title.like(f"%{q}%"), BookCopy.id.like(f"%{q}%")))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    items = list(db.scalars(
+        stmt.options(selectinload(BookCopy.book), selectinload(BookCopy.registered_location))
+        .order_by(BookCopy.id).limit(limit).offset(offset)
+    ))
+    return items, total

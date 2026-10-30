@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     db_password: str
     db_name: str
 
+    # [가정] 프론트엔드 개발 서버 주소 (React/Vite 기본 포트). 쉼표로 여러 개. 프론트 담당자와 협의 후 조정.
+    cors_origins: str = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
+
     # [가정] 프론트엔드 로그인 방식이 정해지기 전까지 쓰는 관리자 토큰. 형식: "관리자ID:토큰,관리자ID2:토큰2"
     admin_tokens: str = ""
 
@@ -37,6 +40,10 @@ class Settings(BaseSettings):
     # [가정] 로봇 통신 기준. 로봇 담당자와 상태 보고 주기를 협의 후 조정한다.
     robot_offline_after_seconds: int = 60    # 마지막 통신 후 이 시간이 지나면 OFFLINE, 진행 중 작업은 UNKNOWN
     task_watchdog_interval_seconds: int = 10 # 위 검사를 서버가 몇 초마다 할지
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def admin_token_map(self) -> dict[str, str]:

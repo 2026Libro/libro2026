@@ -7,6 +7,7 @@ import contextlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
@@ -16,6 +17,7 @@ from app.routers import (
     basket,
     books,
     copies,
+    dashboard,
     health,
     observations,
     robots,
@@ -23,7 +25,9 @@ from app.routers import (
     shelves,
     tasks,
     verifications,
+    ws,
 )
+from app.services import alerts, realtime_events  # noqa: F401  DB 변경 감지 리스너 등록 (알림 생성, 실시간 이벤트)
 
 
 @asynccontextmanager
@@ -37,6 +41,13 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title=get_settings().app_name, version="0.1.0", lifespan=lifespan)
 register_exception_handlers(app)
+# 다른 주소(포트)에서 실행되는 프론트엔드가 이 API를 호출할 수 있도록 허용 (.env의 CORS_ORIGINS)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_origin_list,
+    allow_methods=["*"],
+    allow_headers=["*"],  # X-Admin-Token 등
+)
 
 app.include_router(health.router)
 app.include_router(books.router)
@@ -49,3 +60,5 @@ app.include_router(robots.router)
 app.include_router(tasks.router)
 app.include_router(basket.router)
 app.include_router(admin.router)
+app.include_router(dashboard.router)
+app.include_router(ws.router)
