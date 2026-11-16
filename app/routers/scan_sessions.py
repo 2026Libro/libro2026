@@ -1,16 +1,17 @@
 """스캔 세션 API."""
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.enums import DeviceType
-from app.core.ids import SHELF_ID_PATTERN
+from app.core.ids import SHELF_ID_PATTERN, SLOT_ID_PATTERN
 from app.core.security import require_admin, require_device
 from app.db.session import get_db
 from app.models import DeviceCredential
 from app.schemas.common import Page
 from app.schemas.scan_session import ScanSessionCreate, ScanSessionFinish, ScanSessionRead
-from app.schemas.verification import UnobservedCheckResult
+from app.schemas.verification import SlotOrderCheck, UnobservedCheckResult
 from app.services import scan_session as scan_service
+from app.services import shelf_order as shelf_order_service
 from app.services import verification as verification_service
 
 router = APIRouter(prefix="/scan-sessions", tags=["scan-sessions"])
@@ -62,3 +63,14 @@ def list_sessions(
 @router.get("/{session_id}", response_model=ScanSessionRead)
 def get_session(session_id: str, db: Session = Depends(get_db)):
     return scan_service.get_session_read(db, session_id)
+
+
+@router.get("/{session_id}/slots/{slot_id}/order-check", response_model=SlotOrderCheck)
+def slot_order_check(session_id: str, slot_id: str = Path(pattern=SLOT_ID_PATTERN, examples=["A-01-03"]),
+                     db: Session = Depends(get_db)):
+    """같은 칸 안 청구기호 순서 검사. 사진마다 왼쪽→오른쪽(order) 순서로 청구기호가 맞는지 본다.
+
+    서가·칸 범위표 없이 쓸 수 있다. 관측에 image_ref와 order가 있어야 검사 대상이 된다.
+    순서를 벗어난 책은 OUT_OF_ORDER, 청구기호를 알 수 없는 책은 UNIDENTIFIED(검사 제외).
+    """
+    return shelf_order_service.check_slot_order(db, session_id, slot_id)

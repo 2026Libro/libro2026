@@ -6,7 +6,7 @@
 - 신뢰도는 0.0~1.0 범위로 받음. 임계값은 여기서 정하지 않는다.
 - 정의되지 않은 필드가 오면 거부한다 (오타를 조기에 발견하기 위함).
 """
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.core.ids import BookCopyId, ObservationId, RobotId, ScanSessionId, ShelfId, SlotId, slot_belongs_to_shelf
 from app.schemas.common import UtcDatetime
@@ -46,7 +46,13 @@ class ObservationCreate(BaseModel):
     confidence: Confidence
     candidates: list[Candidate] = Field(default_factory=list, max_length=20)
     reobservation_of: ObservationId | None = None
-    image_ref: str | None = Field(default=None, max_length=500)
+    image_ref: str | None = Field(default=None, max_length=500,
+                                  description="이미지 ID 겸 파일 경로. 같은 사진에서 나온 책은 같은 값")
+    bbox: list[int] | None = Field(default=None, min_length=4, max_length=4,
+                                   description="원본 이미지 픽셀 기준 책등 위치 [x, y, width, height]")
+    order: int | None = Field(default=None, ge=1, description="같은 이미지 안에서 왼쪽부터 순번 (1부터)")
+    image_width: int | None = Field(default=None, ge=1, description="원본 이미지 가로 픽셀")
+    image_height: int | None = Field(default=None, ge=1, description="원본 이미지 세로 픽셀")
     captured_at: AwareDatetime           # 시간대(+09:00 등) 필수
 
     @model_validator(mode="after")
@@ -60,6 +66,15 @@ class ObservationCreate(BaseModel):
 
         if self.reobservation_of == self.observation_id:
             raise ValueError("reobservation_of는 자기 자신을 가리킬 수 없습니다.")
+
+        if self.bbox is not None:
+            x, y, w, h = self.bbox
+            if x < 0 or y < 0 or w <= 0 or h <= 0:
+                raise ValueError("bbox는 [x, y, width, height]이며 x·y는 0 이상, width·height는 1 이상이어야 합니다.")
+            if self.image_width and x + w > self.image_width or self.image_height and y + h > self.image_height:
+                raise ValueError("bbox가 이미지 크기(image_width·image_height)를 벗어납니다.")
+        if (self.order is not None or self.bbox is not None) and not self.image_ref:
+            raise ValueError("bbox·order는 이미지 안 위치이므로 image_ref(이미지 ID)가 함께 필요합니다.")
         return self
 
 
@@ -89,5 +104,15 @@ class ObservationRead(BaseModel):
     candidates: list[CandidateRead]
     reobservation_of: str | None
     image_ref: str | None
+    bbox: list[int] | None
+    order: int | None
+    image_width: int | None
+    image_height: int | None
     captured_at: UtcDatetime
     received_at: UtcDatetime
+
+    @computed_field
+    @property
+    def image_url(self) -> str | None:
+        """이미지 조회 API 경로 (image_ref가 없으면 null). 서버 주소 뒤에 붙여 <img src>로 쓴다."""
+        return f"/observations/{self.id}/image" if self.image_ref else None

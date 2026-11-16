@@ -27,6 +27,29 @@ class LocationVerdict(StrEnum):
     UNDETERMINED = "UNDETERMINED"
 
 
+class ShelfOrderStatus(StrEnum):
+    """같은 칸 안 청구기호 순서 검사 결과 (책 1권 기준)."""
+
+    IN_ORDER = "IN_ORDER"            # 청구기호 순서에 맞게 꽂혀 있음
+    OUT_OF_ORDER = "OUT_OF_ORDER"    # 앞뒤 책과 청구기호 순서가 맞지 않음
+    UNIDENTIFIED = "UNIDENTIFIED"    # 청구기호를 알 수 없어 검사에서 뺌 (식별 실패, 후보가 서로 다른 책)
+
+
+class ResultBadge(StrEnum):
+    """화면에 표시할 대표 판정 1개. 판정 4개 축에서 서버가 계산한다 (services/verification.py의 result_badge).
+
+    프론트엔드는 이 값을 그대로 표시한다. 우선순위는 위에서부터.
+    """
+
+    MISPLACED_CONFIRMED = "MISPLACED_CONFIRMED"  # 오배가 확정
+    MISPLACED_SUSPECTED = "MISPLACED_SUSPECTED"  # 오배가 의심
+    NOT_OBSERVED = "NOT_OBSERVED"                # 스캔 완료 범위에서 미관측 (분실 아님)
+    RECOGNITION_ISSUE = "RECOGNITION_ISSUE"      # 인식 실패·불확실·미등록 도서
+    LOCATION_UNDETERMINED = "LOCATION_UNDETERMINED"  # 책은 알아봤으나 위치 판정 불가 (후보가 여러 칸에 걸침, 등록 위치 없음)
+    SCAN_INCOMPLETE = "SCAN_INCOMPLETE"          # 스캔 중단으로 판단 보류
+    NORMAL = "NORMAL"                            # 제자리
+
+
 class ObservationStatus(StrEnum):
     """스캔 범위 기준 관측 상태 (BE-007)."""
 

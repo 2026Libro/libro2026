@@ -4,6 +4,7 @@
 관측과 검증 결과는 한 트랜잭션으로 함께 저장된다.
 """
 from datetime import UTC
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -86,6 +87,10 @@ def receive_observation(db: Session, data: ObservationCreate, th: Thresholds) ->
         identification_confidence=data.confidence.identification,
         reobservation_of=data.reobservation_of,
         image_ref=data.image_ref,
+        bbox=data.bbox,
+        order=data.order,
+        image_width=data.image_width,
+        image_height=data.image_height,
         captured_at=data.captured_at.astimezone(UTC).replace(tzinfo=None),
         raw_payload=payload,
         candidates=[
@@ -112,6 +117,19 @@ def get_observation(db: Session, observation_id: str) -> Observation:
     if obs is None:
         raise AppError(ErrorCode.NOT_FOUND, f"관측 '{observation_id}'를 찾을 수 없습니다.", status_code=404)
     return obs
+
+
+def image_path(obs: Observation, image_root: str) -> Path:
+    """관측 이미지 파일 경로. 보관 폴더 밖을 가리키는 경로(../, 절대 경로)는 거부한다."""
+    if not obs.image_ref:
+        raise AppError(ErrorCode.NOT_FOUND, f"관측 '{obs.id}'에는 이미지가 없습니다.", status_code=404)
+    root = Path(image_root).resolve()
+    path = (root / obs.image_ref).resolve()
+    if not path.is_relative_to(root):
+        raise AppError(ErrorCode.NOT_FOUND, f"관측 '{obs.id}'의 이미지 경로가 올바르지 않습니다.", status_code=404)
+    if not path.is_file():
+        raise AppError(ErrorCode.NOT_FOUND, f"관측 '{obs.id}'의 이미지 파일이 서버에 없습니다.", status_code=404)
+    return path
 
 
 def list_observations(

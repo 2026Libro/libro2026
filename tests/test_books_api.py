@@ -72,9 +72,11 @@ def test_search_books(client, book):
     assert page["items"][0]["id"] == book["id"]
 
 
-def test_duplicate_isbn_rejected(client, book):
+def test_duplicate_isbn_allowed(client, book):
+    """전집·판 차이로 서로 다른 도서가 같은 ISBN을 쓰는 경우가 있어 허용한다."""
     res = client.post("/books", json={**BOOK, "title": "다른 책"}, headers=ADMIN_HEADERS)
-    assert res.status_code == 409
+    assert res.status_code == 201
+    assert res.json()["id"] != book["id"]
 
 
 def test_invalid_isbn_rejected(client):

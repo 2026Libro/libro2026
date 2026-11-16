@@ -52,7 +52,12 @@ class Observation(Base):
     ocr_confidence: Mapped[float]
     identification_confidence: Mapped[float]
     reobservation_of: Mapped[str | None] = mapped_column(ForeignKey("observations.id"), index=True)
-    image_ref: Mapped[str | None] = mapped_column(String(500))
+    image_ref: Mapped[str | None] = mapped_column(String(500))  # 이미지 ID 겸 파일 경로 (같은 사진의 책은 같은 값)
+    # 이미지 안 책등 위치 (AI 합의 2026-11-16). bbox는 원본 픽셀 [x, y, width, height], order는 왼쪽부터 1, 2, 3…
+    bbox: Mapped[list[int] | None] = mapped_column(JSON)
+    order: Mapped[int | None] = mapped_column("order_in_image")
+    image_width: Mapped[int | None]
+    image_height: Mapped[int | None]
     captured_at: Mapped[datetime] = mapped_column(UtcDateTime)
     received_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     # 원본 JSON 보관. 아직 합의되지 않은 필드가 바뀌어도 원본을 다시 확인할 수 있다.

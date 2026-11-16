@@ -23,14 +23,6 @@ def _commit_or_conflict(db: Session, message: str) -> None:
         raise AppError(ErrorCode.ALREADY_EXISTS, message, status_code=409)
 
 
-def _check_isbn_unused(db: Session, isbn: str | None, exclude_book_id: int | None = None) -> None:
-    if isbn is None:
-        return
-    existing = db.scalar(select(Book.id).where(Book.isbn == isbn))
-    if existing is not None and existing != exclude_book_id:
-        raise AppError(ErrorCode.ALREADY_EXISTS, f"ISBN '{isbn}'은 이미 도서 {existing}에 등록되어 있습니다.", status_code=409)
-
-
 def _get_slot(db: Session, slot_id: str) -> ShelfSlot:
     slot = db.get(ShelfSlot, slot_id)
     if slot is None:
@@ -41,10 +33,10 @@ def _get_slot(db: Session, slot_id: str) -> ShelfSlot:
 # ---------- 도서(서지 정보) ----------
 
 def create_book(db: Session, data: BookCreate) -> Book:
-    _check_isbn_unused(db, data.isbn)
+    # ISBN은 중복을 허용한다 (전집·판 차이로 서로 다른 도서가 같은 ISBN을 쓰는 경우가 있음).
     book = Book(**data.model_dump())
     db.add(book)
-    _commit_or_conflict(db, f"ISBN '{data.isbn}'이 이미 등록되어 있습니다.")
+    db.commit()
     return book
 
 
@@ -71,10 +63,9 @@ def get_book(db: Session, book_id: int) -> Book:
 
 def update_book(db: Session, book_id: int, data: BookUpdate) -> Book:
     book = get_book(db, book_id)
-    _check_isbn_unused(db, data.isbn, exclude_book_id=book_id)
     for field, value in data.model_dump().items():
         setattr(book, field, value)
-    _commit_or_conflict(db, f"ISBN '{data.isbn}'이 이미 등록되어 있습니다.")
+    db.commit()
     return book
 
 
@@ -92,7 +83,8 @@ def create_copy(db: Session, book_id: int, data: CopyCreate, admin_id: str) -> B
     if db.get(BookCopy, data.id):
         raise AppError(ErrorCode.ALREADY_EXISTS, f"복본 '{data.id}'가 이미 있습니다.", status_code=409)
 
-    copy = BookCopy(id=data.id, book_id=book_id, loan_status=data.loan_status)
+    copy = BookCopy(id=data.id, book_id=book_id, loan_status=data.loan_status,
+                    call_number=data.call_number, room=data.room)
     if data.slot_id:
         _get_slot(db, data.slot_id)
         copy.registered_location = BookLocation(slot_id=data.slot_id)

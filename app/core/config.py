@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # [가정] 로봇이 재관측 촬영을 끝낸 뒤 AI 결과를 기다리는 최대 시간. 지나면 관리자 검토로 넘긴다.
     reobservation_result_wait_seconds: int = 300
 
+    # [가정] 관측 이미지 보관 폴더. 관측의 image_ref(상대 경로)를 이 폴더 기준으로 찾는다.
+    # 실제 보관 방식(AI 서버 공유 폴더, 백엔드 업로드 등)은 AI 담당자와 협의 후 정한다.
+    image_root: str = "data/images"
+
     # [가정] 로봇 통신 기준. 로봇 담당자와 상태 보고 주기를 협의 후 조정한다.
     robot_offline_after_seconds: int = 60    # 마지막 통신 후 이 시간이 지나면 OFFLINE, 진행 중 작업은 UNKNOWN
     task_watchdog_interval_seconds: int = 10 # 위 검사를 서버가 몇 초마다 할지

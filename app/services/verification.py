@@ -11,8 +11,8 @@
 """
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from app.core.config import Settings
 from app.core.enums import (
@@ -22,14 +22,24 @@ from app.core.enums import (
     LocationVerdict,
     ObservationStatus,
     PhysicalLocationType,
+    ResultBadge,
     ScanSessionStatus,
     WorkflowStatus,
 )
 from app.core.errors import AppError
 from app.db.base import utcnow
-from app.models import BookCopy, BookLocation, Observation, ObservationCandidate, ScanSession, ShelfSlot, VerificationResult
+from app.models import (
+    Book,
+    BookCopy,
+    BookLocation,
+    Observation,
+    ObservationCandidate,
+    ScanSession,
+    ShelfSlot,
+    VerificationResult,
+)
 from app.schemas.common import ErrorCode
-from app.schemas.verification import UnobservedCheckResult
+from app.schemas.verification import UnobservedCheckResult, VerificationRead
 from app.services import retrieval
 from app.services.robot_task import create_reobservation_task
 
@@ -273,20 +283,108 @@ def _unobserved_workflow(copy: BookCopy, scan_completed: bool) -> tuple[Workflow
     return WorkflowStatus.REVIEW_REQUIRED, "스캔 완료 범위에서 관측되지 않음 (분실 처리 아님, 관리자 확인 필요)"
 
 
-# ---------- 4. 조회 ----------
+# ---------- 4. 화면 표시용 값 ----------
 
-def list_verifications(db: Session, filters: dict, limit: int, offset: int) -> tuple[list[VerificationResult], int]:
-    stmt = select(VerificationResult)
+def result_badge(row: VerificationResult) -> ResultBadge:
+    """판정 4개 축에서 화면 대표 판정 1개를 고른다 (우선순위는 ResultBadge 정의 순서)."""
+    if row.location_verdict is LocationVerdict.MISPLACED_CONFIRMED:
+        return ResultBadge.MISPLACED_CONFIRMED
+    if row.location_verdict is LocationVerdict.MISPLACED_SUSPECTED:
+        return ResultBadge.MISPLACED_SUSPECTED
+    if row.observation_status is ObservationStatus.NOT_OBSERVED:
+        return ResultBadge.NOT_OBSERVED
+    if row.observation_status is ObservationStatus.SCAN_INCOMPLETE:
+        return ResultBadge.SCAN_INCOMPLETE
+    if row.identification_status in _RECOGNITION_ISSUES:
+        return ResultBadge.RECOGNITION_ISSUE
+    if row.location_verdict is LocationVerdict.NORMAL:
+        return ResultBadge.NORMAL
+    return ResultBadge.LOCATION_UNDETERMINED  # IDENTIFIED·CANDIDATE_ONLY인데 위치 판정 불가
+
+
+_RECOGNITION_ISSUES = (IdentificationStatus.FAILED, IdentificationStatus.UNCERTAIN, IdentificationStatus.UNREGISTERED)
+
+
+def _superseded_by_expr():
+    """이 결과를 대체한 더 새로운 결과의 id (없으면 NULL). SQL 상관 서브쿼리.
+
+    1) 재관측: 새 관측의 reobservation_of가 이 결과의 관측을 가리킴
+    2) 미관측 판정 뒤 늦게 도착한 관측이 같은 세션에서 이 책을 확정 또는 후보로 언급함
+    """
+    newer = aliased(VerificationResult)
+    newer_obs = aliased(Observation)
+    by_reobservation = (
+        select(func.max(newer.id))
+        .join(newer_obs, newer_obs.id == newer.observation_id)
+        .where(newer_obs.reobservation_of == VerificationResult.observation_id)
+        .scalar_subquery()
+    )
+    mentioned = or_(
+        newer_obs.reported_book_copy_id == VerificationResult.book_copy_id,
+        select(ObservationCandidate.id).where(
+            ObservationCandidate.observation_id == newer_obs.id,
+            ObservationCandidate.book_copy_id == VerificationResult.book_copy_id,
+        ).exists(),
+    )
+    by_late_observation = (
+        select(func.min(newer.id))
+        .join(newer_obs, newer_obs.id == newer.observation_id)
+        .where(newer.scan_session_id == VerificationResult.scan_session_id, newer.id > VerificationResult.id, mentioned)
+        .scalar_subquery()
+    )
+    return func.coalesce(
+        by_reobservation,
+        case((VerificationResult.observation_status == ObservationStatus.NOT_OBSERVED, by_late_observation)),
+    )
+
+
+def _to_read(row: VerificationResult, title: str | None, superseded_by: int | None) -> VerificationRead:
+    return VerificationRead(
+        id=row.id, scan_session_id=row.scan_session_id, observation_id=row.observation_id,
+        book_copy_id=row.book_copy_id, title=title, identification_status=row.identification_status,
+        location_verdict=row.location_verdict, observation_status=row.observation_status,
+        workflow_status=row.workflow_status, badge=result_badge(row), registered_slot_id=row.registered_slot_id,
+        observed_slot_id=row.observed_slot_id, reobservation_count=row.reobservation_count,
+        superseded_by=superseded_by, note=row.note, created_at=row.created_at, updated_at=row.updated_at,
+    )
+
+
+def _read_stmt():
+    superseded_by = _superseded_by_expr()
+    stmt = (
+        select(VerificationResult, Book.title, superseded_by.label("superseded_by"))
+        .outerjoin(BookCopy, BookCopy.id == VerificationResult.book_copy_id)
+        .outerjoin(Book, Book.id == BookCopy.book_id)
+    )
+    return stmt, superseded_by
+
+
+# ---------- 5. 조회 ----------
+
+def list_verifications(
+    db: Session, filters: dict, limit: int, offset: int, slot_id: str | None = None, latest_only: bool = False,
+) -> tuple[list[VerificationRead], int]:
+    stmt, superseded_by = _read_stmt()
     for field, value in filters.items():
         if value is not None:
             stmt = stmt.where(getattr(VerificationResult, field) == value)
+    if slot_id:
+        # 관측된 결과는 관측 칸, 미관측 결과는 등록 칸 기준
+        stmt = stmt.where(or_(
+            VerificationResult.observed_slot_id == slot_id,
+            and_(VerificationResult.observed_slot_id.is_(None), VerificationResult.registered_slot_id == slot_id),
+        ))
+    if latest_only:
+        stmt = stmt.where(superseded_by.is_(None))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
-    items = list(db.scalars(stmt.order_by(VerificationResult.id.desc()).limit(limit).offset(offset)))
-    return items, total
+    rows = db.execute(stmt.order_by(VerificationResult.id.desc()).limit(limit).offset(offset)).all()
+    return [_to_read(row, title, sup) for row, title, sup in rows], total
 
 
-def get_verification(db: Session, verification_id: int) -> VerificationResult:
-    row = db.get(VerificationResult, verification_id)
-    if row is None:
+def get_verification(db: Session, verification_id: int) -> VerificationRead:
+    stmt, _ = _read_stmt()
+    found = db.execute(stmt.where(VerificationResult.id == verification_id)).first()
+    if found is None:
         raise AppError(ErrorCode.NOT_FOUND, f"검증 결과 {verification_id}를 찾을 수 없습니다.", status_code=404)
-    return row
+    row, title, sup = found
+    return _to_read(row, title, sup)

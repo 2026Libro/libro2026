@@ -1,5 +1,6 @@
 """AI 관측 결과 API."""
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -56,3 +57,16 @@ def list_observations(
 @router.get("/{observation_id}", response_model=ObservationRead)
 def get_observation(observation_id: str, db: Session = Depends(get_db)):
     return observation_service.get_observation(db, observation_id)
+
+
+@router.get(
+    "/{observation_id}/image",
+    response_class=FileResponse,
+    responses={200: {"content": {"image/jpeg": {}, "image/png": {}}, "description": "관측 이미지 파일"},
+               404: {"description": "이미지가 없거나 서버에 파일이 없음"}},
+)
+def get_observation_image(observation_id: str, db: Session = Depends(get_db),
+                          settings: Settings = Depends(get_settings)):
+    """관측 이미지 파일. 응답의 image_url이 이 경로다. [가정] 파일은 IMAGE_ROOT 폴더에서 image_ref 경로로 찾는다."""
+    obs = observation_service.get_observation(db, observation_id)
+    return FileResponse(observation_service.image_path(obs, settings.image_root))

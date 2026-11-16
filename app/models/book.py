@@ -20,11 +20,15 @@ class Book(TimestampMixin, Base):
     __tablename__ = "books"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    isbn: Mapped[str | None] = mapped_column(String(13), unique=True)  # ISBN 없는 자료도 있어 nullable
+    # 도서관 서지관리번호 (상세 URL의 ID). 도서관 자료를 가져올 때 같은 도서를 다시 찾는 기준이다.
+    library_bib_id: Mapped[str | None] = mapped_column(String(20), unique=True)
+    # ISBN 없는 자료도 있어 nullable. 전집·판 차이로 서로 다른 도서가 같은 ISBN을 쓰기도 해서 중복을 허용한다.
+    isbn: Mapped[str | None] = mapped_column(String(13), index=True)
     title: Mapped[str] = mapped_column(String(500), index=True)
     author: Mapped[str | None] = mapped_column(String(300))
     publisher: Mapped[str | None] = mapped_column(String(200))
-    call_number: Mapped[str | None] = mapped_column(String(100), index=True)  # 청구기호
+    publication_year: Mapped[str | None] = mapped_column(String(10))
+    call_number: Mapped[str | None] = mapped_column(String(100), index=True)  # 대표 청구기호 (복본 기호 c.N 제외)
 
     copies: Mapped[list["BookCopy"]] = relationship(back_populates="book")
 
@@ -34,8 +38,12 @@ class BookCopy(TimestampMixin, Base):
 
     __tablename__ = "book_copies"
 
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)  # BOOK-125
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)  # 도서관 등록번호 EM0174130 (예전 샘플: BOOK-125)
     book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    # 이 복본의 청구기호 (권차 v.N·복본 기호 c.N 포함). 책등 라벨과 같아 AI 식별·서가 순서 판단에 쓴다.
+    call_number: Mapped[str | None] = mapped_column(String(100), index=True)
+    # 도서관 자료실 (예: 고양캠퍼스 대출실). 서가·칸 위치가 아니다.
+    room: Mapped[str | None] = mapped_column(String(50), index=True)
     loan_status: Mapped[LoanStatus] = mapped_column(enum_type(LoanStatus), default=LoanStatus.AVAILABLE)
 
     # 현재 물리 위치. 로봇이 확인하지 않은 위치는 ESTIMATED로 둔다.
