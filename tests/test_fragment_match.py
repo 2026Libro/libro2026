@@ -94,3 +94,33 @@ def test_match_image_uses_neighbor_order_for_ties():
     assert calls[0] == "R 004.603 권65ㅇ" and calls[2] == "R 004.603 정45ㅇ"
     assert calls[3].startswith("R 004.603 홍73ㅇ") and calls[4] == "R 004.603 C579d워"
     assert out_of_order(calls) == set()
+
+
+# ---------- 관측 API: 글자 조각만 보내면 백엔드가 조각 매칭 ----------
+
+from tests.test_shelf_order import observe, order_check, shelf_env  # noqa: E402,F401  shelf_env는 fixture
+
+
+def test_observation_with_fragments_only_is_matched(client, shelf_env):
+    obs = observe(client, shelf_env, 1, text_fragments=["000", "811.16", "김55ㄷ"])
+    assert (obs["match_method"], obs["reported_book_copy_id"]) == ("FRAGMENTS", "EM9800004")
+    assert obs["identification_confidence"] > 0.7
+
+
+def test_fragments_used_when_call_number_text_finds_nothing(client, shelf_env):
+    obs = observe(client, shelf_env, 1, call_number_text="999 모름", text_fragments=["811.16", "박1ㄱ"])
+    assert (obs["match_method"], obs["candidates"][0]["book_copy_id"]) == ("FRAGMENTS", "EM9800006")
+    first = observe(client, shelf_env, 2, call_number_text="811.16 김542ㄴ", text_fragments=["811.16", "박1ㄱ"])
+    assert (first["match_method"], first["reported_book_copy_id"]) == ("EXACT", "EM9800003")   # 청구기호가 먼저
+
+
+def test_fragments_feed_the_flow_check(client, shelf_env):
+    observe(client, shelf_env, 1, text_fragments=["811.16", "김54ㄱ", "c.2"])
+    observe(client, shelf_env, 2, text_fragments=["330.9", "박12ㄱ"])          # 시집 사이 경제 책
+    observe(client, shelf_env, 3, text_fragments=["811.16", "박1ㄱ"])
+    books = order_check(client, shelf_env)["images"][0]["books"]
+    assert [b["status"] for b in books] == ["IN_ORDER", "OUT_OF_PLACE", "IN_ORDER"]
+
+
+def test_too_many_fragments_rejected(client, shelf_env):
+    observe(client, shelf_env, 1, text_fragments=["x"] * 31, expect=422)

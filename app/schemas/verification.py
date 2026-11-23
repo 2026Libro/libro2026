@@ -58,6 +58,8 @@ class SlotOrderBook(BaseModel):
     status: ShelfOrderStatus
     neighbors: list[str] = Field(default_factory=list,
                                  description="이탈한 책이면 흐름상 앞·뒤 책의 청구기호 (판단 근거)")
+    duplicate_of: str | None = Field(default=None,
+                                     description="DUPLICATE면 같은 책으로 본 앞 사진의 관측 ID")
 
 
 class SlotOrderImage(BaseModel):

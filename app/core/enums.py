@@ -41,6 +41,7 @@ class ShelfOrderStatus(StrEnum):
     OUT_OF_ORDER = "OUT_OF_ORDER"    # 순서만 어긋남 (앞뒤 책과 같은 분류 근처, 가벼운 오류)
     OUT_OF_PLACE = "OUT_OF_PLACE"    # 엉뚱한 책 (앞뒤 책과 분류번호 앞 3자리가 다름)
     UNIDENTIFIED = "UNIDENTIFIED"    # 청구기호를 알 수 없어 검사에서 뺌 (식별 실패, 후보가 서로 다른 책)
+    DUPLICATE = "DUPLICATE"          # 겹쳐 찍힌 사진에서 앞 사진과 같은 책 (한 권으로 보고 검사에서 뺌)
 
 
 class ResultBadge(StrEnum):

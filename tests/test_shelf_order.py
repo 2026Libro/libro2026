@@ -226,3 +226,59 @@ def test_badge_with_sequence(verdict, sequence, expected):
                              location_verdict=LocationVerdict(verdict),
                              sequence_status=ShelfOrderStatus(sequence) if sequence else None)
     assert result_badge(row) == expected
+
+
+# ---------- 4. 겹쳐 찍은 사진 ----------
+
+def shot(client, env, image, minute, books, slot="S-01-01"):
+    """사진 한 장의 책들 (왼쪽부터). None은 가장자리에 잘려 식별 못 한 책."""
+    return [observe(client, env, order, copy_id, image=image, slot=slot,
+                    captured_at=f"2026-11-16T10:{minute:02d}:00+09:00")
+            for order, copy_id in enumerate(books, start=1)]
+
+
+def test_overlapping_photos_count_once(client, shelf_env):
+    first = shot(client, shelf_env, "img/a.jpg", 0, ["EM9800001", "EM9800003", "EM9800004"])
+    shot(client, shelf_env, "img/b.jpg", 1, ["EM9800003", "EM9800004", "EM9800006"])   # 앞 사진 2권과 겹침
+    result = order_check(client, shelf_env)
+    assert (result["out_of_order_count"], result["out_of_place_count"]) == (0, 0)  # 겹친 2권 때문에 순서 오류가 나지 않음
+    second = result["images"][1]["books"]
+    assert [b["status"] for b in second] == ["DUPLICATE", "DUPLICATE", "IN_ORDER"]
+    assert [b["duplicate_of"] for b in second[:2]] == [first[1]["id"], first[2]["id"]]
+
+
+def test_overlap_skips_cut_off_book_at_edge(client, shelf_env):
+    shot(client, shelf_env, "img/a.jpg", 0, ["EM9800001", "EM9800003", None])
+    shot(client, shelf_env, "img/b.jpg", 1, [None, "EM9800003", "EM9800007", "EM9800006"])
+    second = order_check(client, shelf_env)["images"][1]["books"]
+    assert [b["status"] for b in second] == ["DUPLICATE", "DUPLICATE", "OUT_OF_PLACE", "IN_ORDER"]
+    assert second[0]["duplicate_of"] is None          # 잘린 책은 어느 책인지 모름
+
+
+def test_three_photos_chain_points_to_first_sighting(client, shelf_env):
+    first = shot(client, shelf_env, "img/a.jpg", 0, ["EM9800001", "EM9800003"])
+    shot(client, shelf_env, "img/b.jpg", 1, ["EM9800003", "EM9800004"])
+    shot(client, shelf_env, "img/c.jpg", 2, ["EM9800003", "EM9800004", "EM9800006"])
+    images = order_check(client, shelf_env)["images"]
+    assert [b["status"] for b in images[2]["books"]] == ["DUPLICATE", "DUPLICATE", "IN_ORDER"]
+    assert images[2]["books"][0]["duplicate_of"] == first[1]["id"]
+
+
+def test_no_overlap_between_different_slots_or_different_books(client, shelf_env):
+    shot(client, shelf_env, "img/a.jpg", 0, ["EM9800001", "EM9800004"])
+    shot(client, shelf_env, "img/b.jpg", 1, ["EM9800004", "EM9800006"], slot="S-01-02")   # 다른 칸: 합치지 않음
+    shot(client, shelf_env, "img/c.jpg", 2, ["EM9800006"], slot="S-01-02")
+    assert [b["status"] for b in order_check(client, shelf_env, "S-01-02")["images"][0]["books"]] == [
+        "IN_ORDER", "IN_ORDER"]
+    assert order_check(client, shelf_env, "S-01-02")["images"][1]["books"][0]["status"] == "DUPLICATE"
+
+
+def test_analysis_complete_records_duplicate(client, shelf_env):
+    shot(client, shelf_env, "img/a.jpg", 0, ["EM9800001", "EM9800003"])
+    dup = shot(client, shelf_env, "img/b.jpg", 1, ["EM9800003", "EM9800006"])[0]
+    client.post(f"/scan-sessions/{shelf_env['session_id']}/finish", json={"status": "COMPLETED"},
+                headers=shelf_env["robot"])
+    res = client.post(f"/scan-sessions/{shelf_env['session_id']}/analysis-complete", headers=shelf_env["ai"])
+    assert res.status_code == 200 and res.json()["out_of_place_count"] == 0, res.text
+    page = client.get("/verifications", params={"scan_session_id": shelf_env["session_id"], "limit": 100}).json()
+    assert {v["observation_id"]: v["sequence_status"] for v in page["items"]}[dup["id"]] == "DUPLICATE"

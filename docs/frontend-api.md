@@ -365,6 +365,7 @@
 | `OUT_OF_ORDER` | 순서만 어긋남. 앞뒤 책과 같은 분류(분류번호 앞 3자리) 근처 |
 | `OUT_OF_PLACE` | 엉뚱한 책. 흐름상 앞·뒤 책과 분류번호 앞 3자리가 다름. `neighbors`에 앞뒤 청구기호(판단 근거)가 옴 |
 | `UNIDENTIFIED` | 청구기호를 알 수 없어 검사에서 뺌 |
+| `DUPLICATE` | 겹쳐 찍은 사진에서 앞 사진과 같은 책. 한 권으로 보고 검사에서 뺌. `duplicate_of`에 처음 본 관측 ID (화면에서는 흐리게 표시하거나 숨기면 됨) |
 
 ```json
 {"scan_session_id": "SCAN-…", "shelf_id": "A-01", "out_of_order_count": 1, "out_of_place_count": 1,

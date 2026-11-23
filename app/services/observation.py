@@ -14,7 +14,8 @@ from app.core.errors import AppError
 from app.models import BookCopy, Observation, ObservationCandidate, ShelfSlot
 from app.schemas.common import ErrorCode
 from app.schemas.observation import Candidate, ObservationCreate
-from app.services.catalog_match import get_index
+from app.services.catalog_match import MatchResult, get_index
+from app.services.fragment_match import get_fragment_index
 from app.services.scan_session import get_session
 from app.services.verification import Thresholds, verify_observation
 
@@ -69,9 +70,15 @@ def _validate_references(db: Session, data: ObservationCreate) -> None:
 def _match_text(db: Session, data: ObservationCreate) -> tuple[ObservationCreate, str]:
     """AI가 읽은 글자만 보낸 경우: 백엔드가 DB에서 복본을 찾아 book_copy_id·후보·식별 신뢰도를 채운다.
 
+    1. call_number_text·title_text가 있으면 청구기호 매칭 (catalog_match)
+    2. 그걸로 못 찾았고 text_fragments가 있으면 조각 매칭 (fragment_match)
     원본 요청(raw_payload)은 바꾸지 않는다. 재전송 비교도 원본 기준이다.
     """
-    result = get_index(db).match(data.call_number_text, data.title_text)
+    result = MatchResult("NONE")
+    if data.call_number_text or data.title_text:
+        result = get_index(db).match(data.call_number_text, data.title_text)
+    if result.method == "NONE" and data.text_fragments:
+        result = get_fragment_index(db).match(data.text_fragments)
     return data.model_copy(update={
         "book_copy_id": result.book_copy_id,
         "candidates": [Candidate(book_copy_id=c, score=min(s, 1.0)) for c, s in result.candidates],
@@ -86,7 +93,8 @@ def receive_observation(db: Session, data: ObservationCreate, th: Thresholds) ->
         return _check_duplicate(existing, payload), False
 
     match_method = None
-    if not data.book_copy_id and not data.candidates and (data.call_number_text or data.title_text):
+    if not data.book_copy_id and not data.candidates and (
+            data.call_number_text or data.title_text or data.text_fragments):
         data, match_method = _match_text(db, data)
 
     _validate_references(db, data)

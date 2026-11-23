@@ -6,6 +6,8 @@
 - 신뢰도는 0.0~1.0 범위로 받음. 임계값은 여기서 정하지 않는다.
 - 정의되지 않은 필드가 오면 거부한다 (오타를 조기에 발견하기 위함).
 """
+from typing import Annotated
+
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.core.ids import BookCopyId, ObservationId, RobotId, ScanSessionId, ShelfId, SlotId, slot_belongs_to_shelf
@@ -48,6 +50,10 @@ class ObservationCreate(BaseModel):
         default=None, max_length=200,
         description="OCR로 읽은 청구기호 라벨 (줄바꿈 그대로 가능). book_copy_id·candidates가 없으면 백엔드가 이것으로 매칭")
     title_text: str | None = Field(default=None, max_length=500, description="OCR로 읽은 서명 (매칭 보조)")
+    text_fragments: list[Annotated[str, Field(max_length=200)]] = Field(
+        default_factory=list, max_length=30,
+        description="OCR이 책 1권에서 읽은 글자 조각들 (라벨 줄·제목 일부·띠지 숫자 등, 순서 무관). "
+                    "book_copy_id·candidates가 없으면 백엔드가 이것으로 매칭 (call_number_text로 못 찾을 때도)")
     confidence: Confidence
     candidates: list[Candidate] = Field(default_factory=list, max_length=20)
     reobservation_of: ObservationId | None = None

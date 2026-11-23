@@ -10,6 +10,7 @@
 4. 비교 청구기호: 식별된 복본의 청구기호. 복본 미확정이면 1등 후보 책의 청구기호(c.N 뗀 값)를 쓰되,
    다른 책 후보와 점수 차가 CANDIDATE_MARGIN 미만이면 UNIDENTIFIED로 두고 흐름 계산에서 뺀다.
 5. 재관측으로 대체된 관측은 빼고 최신 관측만 쓴다. image_ref·order가 없는 관측은 위치를 몰라 제외.
+6. 한 칸을 여러 장으로 겹쳐 찍어 다음 사진 앞부분에 같은 책이 다시 나오면 DUPLICATE로 두고 흐름 계산에서 뺀다.
 
 조회 API는 요청 때마다 계산한다. AI 분석 완료 시점에는 결과를 검증 결과(sequence_status)에 기록하고,
 엉뚱한 책은 관리자 검토(REVIEW_REQUIRED)로 넘겨 알림(OUT_OF_PLACE)이 생긴다.
@@ -29,6 +30,7 @@ from app.services.scan_session import get_session
 
 OUT_OF_PLACE_DIGITS = 3   # [가정] 분류번호 앞 몇 자리가 다르면 '엉뚱한 책'으로 볼지 (3 = KDC 강목)
 CANDIDATE_MARGIN = 0.05   # [가정] 후보가 여러 책일 때 1등이 다른 책보다 이만큼 높으면 1등 책으로 흐름 판단
+MAX_OVERLAP = 10          # [가정] 겹쳐 찍은 두 사진에서 겹칠 수 있는 최대 권수
 
 
 @dataclass
@@ -64,6 +66,50 @@ def _reference(obs: Observation, identified: str | None, copies: dict[str, BookC
     return None, None
 
 
+def _same_book(a: SlotOrderBook, b: SlotOrderBook) -> bool:
+    """두 사진에서 본 책이 같은 책인가. 둘 다 복본을 확정했으면 복본으로, 아니면 청구기호(c.N 뗀 값)로 비교."""
+    if a.book_copy_id and b.book_copy_id:
+        return a.book_copy_id == b.book_copy_id
+    return bool(a.call_number and b.call_number) and base_call_number(a.call_number) == base_call_number(b.call_number)
+
+
+def _overlap(prev: list[_Entry], cur: list[_Entry]) -> int:
+    """앞 사진 끝 k권과 다음 사진 앞 k권이 같은 책이면 k (가장 긴 것). 사진 가장자리의 식별 못 한 책은 건너뛰고 맞춘다."""
+    a = [e for e in prev if e.book.call_number]
+    b = [e for e in cur if e.book.call_number]
+    for k in range(min(len(a), len(b), MAX_OVERLAP), 0, -1):
+        if all(_same_book(x.book, y.book) for x, y in zip(a[-k:], b[:k])):
+            return k
+    return 0
+
+
+def _mark_overlaps(entries: list[_Entry]) -> None:
+    """한 칸을 여러 장으로 겹쳐 찍었을 때, 다음 사진에 다시 나온 책을 DUPLICATE로 표시한다 (entries는 서가 순서).
+
+    겹친 구간 안의 식별 못 한 책(가장자리에 잘린 책)도 DUPLICATE로 본다.
+    [가정] 같은 칸의 연속된 두 사진만 비교한다. 복본 기호를 못 읽은 같은 책 2권이 사진 경계에 딱 걸리면
+    1권으로 합쳐질 수 있지만, 청구기호가 같아 흐름 판단에는 영향이 없다.
+    """
+    groups: list[list[_Entry]] = []
+    for e in entries:
+        if groups and (groups[-1][0].obs.slot_id, groups[-1][0].obs.image_ref) == (e.obs.slot_id, e.obs.image_ref):
+            groups[-1].append(e)
+        else:
+            groups.append([e])
+    for prev, cur in zip(groups, groups[1:]):
+        if prev[0].obs.slot_id != cur[0].obs.slot_id or not (k := _overlap(prev, cur)):
+            continue
+        prev_known = [e for e in prev if e.book.call_number]
+        cur_known = [e for e in cur if e.book.call_number]
+        matched = dict(zip((id(e) for e in cur_known[:k]), prev_known[-k:]))
+        last = cur.index(cur_known[k - 1])
+        for e in cur[:last + 1]:   # 겹친 구간: 맞춘 책 + 그 사이·앞의 식별 못 한 책
+            source = matched.get(id(e))
+            e.book.status = ShelfOrderStatus.DUPLICATE
+            # 앞 사진의 책도 그 앞 사진과 겹친 중복이면 처음 본 관측을 가리킨다
+            e.book.duplicate_of = (source.book.duplicate_of or source.obs.id) if source else None
+
+
 def _evaluate(db: Session, session_id: str) -> list[_Entry]:
     """서가 한 줄 순서로 정렬한 관측과 판정."""
     observations = _latest_observations(db, session_id)
@@ -91,7 +137,8 @@ def _evaluate(db: Session, session_id: str) -> list[_Entry]:
             title=title, bbox=obs.bbox,
             status=ShelfOrderStatus.IN_ORDER if call_number else ShelfOrderStatus.UNIDENTIFIED)))
 
-    known = [e for e in entries if e.book.call_number]
+    _mark_overlaps(entries)
+    known = [e for e in entries if e.book.call_number and e.book.status is not ShelfOrderStatus.DUPLICATE]
     wrong = out_of_order([e.book.call_number for e in known])
     kept = [i for i in range(len(known)) if i not in wrong]
     for i in wrong:

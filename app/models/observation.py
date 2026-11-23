@@ -59,8 +59,8 @@ class Observation(Base):
     order: Mapped[int | None] = mapped_column("order_in_image")
     image_width: Mapped[int | None]
     image_height: Mapped[int | None]
-    # 백엔드 매칭: AI가 등록번호 대신 읽은 글자(call_number_text·title_text)만 보낸 경우의 매칭 방법
-    # EXACT / SAME_BOOK / SIMILAR / TITLE / NONE. AI가 등록번호를 직접 보냈으면 NULL
+    # 백엔드 매칭: AI가 등록번호 대신 읽은 글자(call_number_text·title_text·text_fragments)만 보낸 경우의 매칭 방법
+    # EXACT / SAME_BOOK / SIMILAR / TITLE / FRAGMENTS / NONE. AI가 등록번호를 직접 보냈으면 NULL
     match_method: Mapped[str | None] = mapped_column(String(16))
     captured_at: Mapped[datetime] = mapped_column(UtcDateTime)
     received_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
