@@ -3,7 +3,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.enums import AdminActionType, LocationCertainty, PhysicalLocationType
+from app.core.enums import AdminActionType, LocationCertainty, PhysicalLocationType, RegisteredLocationSource
 from app.core.errors import AppError
 from app.models import AdminAction, Book, BookCopy, BookLocation, BookLocationHistory, ShelfSlot
 from app.schemas.book import BookCreate, BookUpdate, CopyCreate, LoanStatusUpdate, RegisteredLocationUpdate
@@ -120,6 +120,8 @@ def change_registered_location(db: Session, copy_id: str, data: RegisteredLocati
 
     if copy.registered_location:
         copy.registered_location.slot_id = data.slot_id
+        # 관리자가 직접 정한 위치는 이후 범위표를 다시 적용해도 덮어쓰지 않는다
+        copy.registered_location.source = RegisteredLocationSource.MANUAL
     else:
         copy.registered_location = BookLocation(slot_id=data.slot_id)
 

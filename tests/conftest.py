@@ -67,3 +67,12 @@ def client(db):
     app.dependency_overrides[get_settings] = lambda: test_settings
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def loan_tracking(client, monkeypatch):
+    """대출 상태를 믿는 모드(LOAN_STATUS_RELIABLE=true). 기본은 꺼져 있다 (도서관 대출 정보 연동 없음)."""
+    settings = app.dependency_overrides[get_settings]().model_copy(update={"loan_status_reliable": True})
+    app.dependency_overrides[get_settings] = lambda: settings
+    monkeypatch.setattr("app.services.retrieval.get_settings", lambda: settings)
+    return settings

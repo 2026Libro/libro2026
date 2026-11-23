@@ -8,7 +8,7 @@ from app.models.book import Book, BookCopy, BookLocation, BookLocationHistory
 from app.models.device import DeviceCredential
 from app.models.observation import Observation, ObservationCandidate, ScanSession, VerificationResult
 from app.models.robot import BasketItem, Robot, RobotTask, TaskEvent
-from app.models.shelf import Shelf, ShelfSlot
+from app.models.shelf import Shelf, ShelfSlot, SlotCallRange, SlotCallRangeHistory
 
 __all__ = [
     "Base",
@@ -27,6 +27,8 @@ __all__ = [
     "ScanSession",
     "Shelf",
     "ShelfSlot",
+    "SlotCallRange",
+    "SlotCallRangeHistory",
     "TaskEvent",
     "VerificationResult",
 ]

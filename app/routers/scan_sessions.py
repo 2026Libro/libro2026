@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.core.enums import DeviceType
 from app.core.ids import SHELF_ID_PATTERN, SLOT_ID_PATTERN
 from app.core.security import require_admin, require_device
@@ -9,7 +10,7 @@ from app.db.session import get_db
 from app.models import DeviceCredential
 from app.schemas.common import Page
 from app.schemas.scan_session import ScanSessionCreate, ScanSessionFinish, ScanSessionRead
-from app.schemas.verification import SlotOrderCheck, UnobservedCheckResult
+from app.schemas.verification import ShelfOrderCheck, SlotOrderCheck, UnobservedCheckResult
 from app.services import scan_session as scan_service
 from app.services import shelf_order as shelf_order_service
 from app.services import verification as verification_service
@@ -39,14 +40,14 @@ def finish_session(
     response_model=UnobservedCheckResult,
     dependencies=[Depends(require_device(DeviceType.AI))],
 )
-def analysis_complete(session_id: str, db: Session = Depends(get_db)):
+def analysis_complete(session_id: str, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
     """AI가 이 세션의 관측을 모두 보냈음을 알린다 → 미관측 판정 (세션당 1회).
 
     [가정] AI 분석이 로봇 촬영보다 늦게 끝날 수 있어, 로봇의 촬영 종료(finish)가 아니라
     AI의 분석 완료 신호를 기준으로 미관측을 판정한다. AI 담당자와 협의 필요.
     로봇이 촬영을 끝내기(finish) 전에는 호출할 수 없다.
     """
-    return verification_service.check_unobserved(db, session_id)
+    return verification_service.check_unobserved(db, session_id, settings.loan_status_reliable)
 
 
 @router.get("", response_model=Page[ScanSessionRead])
@@ -65,12 +66,20 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
     return scan_service.get_session_read(db, session_id)
 
 
+@router.get("/{session_id}/order-check", response_model=ShelfOrderCheck)
+def shelf_order_check(session_id: str, db: Session = Depends(get_db)):
+    """서가 전체 청구기호 흐름 검사. 칸 순서 → 사진 순서 → 사진 안 순번으로 이어 붙여 엉뚱한 책을 찾는다.
+
+    - OUT_OF_PLACE: 엉뚱한 책 (흐름상 앞·뒤 책과 분류번호 앞 3자리가 다름)
+    - OUT_OF_ORDER: 순서만 어긋남 (같은 분류 근처)
+    - UNIDENTIFIED: 청구기호를 알 수 없어 검사 제외
+    관측에 image_ref와 order가 있어야 검사 대상이 된다. 요청할 때마다 최신 관측으로 계산한다.
+    """
+    return shelf_order_service.check_shelf_order(db, session_id)
+
+
 @router.get("/{session_id}/slots/{slot_id}/order-check", response_model=SlotOrderCheck)
 def slot_order_check(session_id: str, slot_id: str = Path(pattern=SLOT_ID_PATTERN, examples=["A-01-03"]),
                      db: Session = Depends(get_db)):
-    """같은 칸 안 청구기호 순서 검사. 사진마다 왼쪽→오른쪽(order) 순서로 청구기호가 맞는지 본다.
-
-    서가·칸 범위표 없이 쓸 수 있다. 관측에 image_ref와 order가 있어야 검사 대상이 된다.
-    순서를 벗어난 책은 OUT_OF_ORDER, 청구기호를 알 수 없는 책은 UNIDENTIFIED(검사 제외).
-    """
+    """칸 하나의 청구기호 흐름 검사 결과. 판정은 서가 전체 흐름으로 하고 이 칸의 책만 보여 준다."""
     return shelf_order_service.check_slot_order(db, session_id, slot_id)

@@ -104,7 +104,7 @@ def test_request_waiting_for_approval_is_never_delivered(client, db, env):
     assert client.get("/robots/R900/tasks/next", headers=env["robot"]).status_code == 204
 
 
-def test_auto_request_skipped_when_unsafe(client, db, env):
+def test_auto_request_skipped_when_unsafe(client, db, env, loan_tracking):
     client.put("/copies/BOOK-900201/loan-status", json={"loan_status": "IN_TRANSIT"}, headers=ADMIN_HEADERS)
     v = confirm_misplaced(client, env)
     assert retrieval_tasks(db) == []
@@ -163,7 +163,7 @@ def test_approve_only_retrieval_tasks(client, env):
     (("PUT", "/copies/BOOK-900201/loan-status", {"loan_status": "CHECKED_OUT"}), "대출 상태"),
     (("PUT", "/copies/BOOK-900201/registered-location", {"slot_id": "T-01-03", "reason": "여기로 변경"}), "인출 불필요"),
 ])
-def test_approve_rechecks_conditions(client, db, env, change, expected_reason):
+def test_approve_rechecks_conditions(client, db, env, change, expected_reason, loan_tracking):
     confirm_misplaced(client, env)
     task_id = retrieval_tasks(db)[0].id
     method, url, body = change

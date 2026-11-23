@@ -24,6 +24,7 @@ from app.core.enums import (
     PhysicalLocationType,
     ResultBadge,
     ScanSessionStatus,
+    ShelfOrderStatus,
     WorkflowStatus,
 )
 from app.core.errors import AppError
@@ -42,6 +43,7 @@ from app.schemas.common import ErrorCode
 from app.schemas.verification import UnobservedCheckResult, VerificationRead
 from app.services import retrieval
 from app.services.robot_task import create_reobservation_task
+from app.services.shelf_order import record_sequence
 
 _MISPLACED = (LocationVerdict.MISPLACED_SUSPECTED, LocationVerdict.MISPLACED_CONFIRMED)
 # 로봇이 들고 있는 상태 (그리퍼·바구니). 서가 관측으로 덮어쓰지 않는다.
@@ -58,11 +60,12 @@ class Thresholds:
     max_reobservations: int
     auto_reobservation: bool = False
     auto_retrieval_request: bool = False
+    use_loan_status: bool = False   # 대출 상태를 믿고 판정에 쓸지 (config.loan_status_reliable)
 
     @classmethod
     def from_settings(cls, s: Settings) -> "Thresholds":
         return cls(s.verify_min_detection, s.verify_min_ocr, s.verify_min_identification, s.verify_max_reobservations,
-                   s.auto_reobservation, s.auto_retrieval_request)
+                   s.auto_reobservation, s.auto_retrieval_request, s.loan_status_reliable)
 
 
 # ---------- 1. 도서 식별 (DB 없이 판단하는 순수 함수) ----------
@@ -115,6 +118,7 @@ def verify_observation(db: Session, obs: Observation, th: Thresholds) -> Verific
     copy_id = None
     registered_slot = None
     verdict = LocationVerdict.UNDETERMINED
+    no_reference = False   # 책은 알아봤지만 비교할 등록 칸이 없음 → 재관측해도 소용없으므로 처리할 일 없음
 
     previous = None
     if obs.reobservation_of:
@@ -127,8 +131,9 @@ def verify_observation(db: Session, obs: Observation, th: Thresholds) -> Verific
         registered_slot = copy.registered_location.slot_id if copy.registered_location else None
 
         if registered_slot is None:
-            notes.append("등록 위치가 없는 복본")
-            needs_review = True
+            # 칸별 범위표 없이 쓰는 경우가 기본이라 검토로 보내지 않는다. 위치는 청구기호 흐름 검사로 판단한다.
+            notes.append("등록 위치가 없는 복본 (청구기호 흐름 검사로 판단)")
+            no_reference = True
         elif registered_slot == obs.slot_id:
             verdict = LocationVerdict.NORMAL
         elif (previous and previous.location_verdict in _MISPLACED and previous.book_copy_id == copy_id
@@ -139,7 +144,7 @@ def verify_observation(db: Session, obs: Observation, th: Thresholds) -> Verific
 
         if copy.loan_status is LoanStatus.CHECKED_OUT:
             notes.append("대출 중으로 등록되어 있으나 서가에서 관측됨")
-            needs_review = True
+            needs_review = needs_review or th.use_loan_status   # 대출 정보가 최신이 아니면 반납 후 정리된 것일 수 있음
         _update_physical_location(copy, obs, notes)
 
     elif status is IdentificationStatus.CANDIDATE_ONLY:
@@ -148,12 +153,14 @@ def verify_observation(db: Session, obs: Observation, th: Thresholds) -> Verific
             verdict = LocationVerdict.NORMAL  # 어느 복본이든 이 칸이 맞는 자리
         elif all(s is not None and s != obs.slot_id for s in slots.values()):
             verdict = LocationVerdict.MISPLACED_SUSPECTED
+        elif all(s is None for s in slots.values()) and _same_book(db, list(slots)):
+            no_reference = True   # 같은 책의 복본 중 어느 것인지만 모름 (청구기호 흐름 검사로 판단)
         notes.append("복본 미확정: 후보 " + ", ".join(f"{c}({s})" for c, s in slots.items()))
 
     elif status is IdentificationStatus.UNREGISTERED:
         needs_review = True
 
-    workflow = _decide_workflow(verdict, needs_review, reobservation_count, th)
+    workflow = None if no_reference and not needs_review else         _decide_workflow(verdict, needs_review, reobservation_count, th)
 
     if previous and previous.workflow_status is not WorkflowStatus.CLOSED:
         previous.workflow_status = WorkflowStatus.CLOSED
@@ -182,6 +189,11 @@ def verify_observation(db: Session, obs: Observation, th: Thresholds) -> Verific
     if verdict is LocationVerdict.MISPLACED_CONFIRMED and th.auto_retrieval_request:
         retrieval.try_create_request(db, result, obs.robot_id)  # 승인 대기로만 생성됨
     return result
+
+
+def _same_book(db: Session, copy_ids: list[str]) -> bool:
+    """후보가 모두 같은 도서(서지)의 복본인가."""
+    return len(set(db.scalars(select(BookCopy.book_id).where(BookCopy.id.in_(copy_ids))))) == 1
 
 
 def _decide_workflow(verdict: LocationVerdict, needs_review: bool, reobservation_count: int,
@@ -220,7 +232,7 @@ def _join(note: str | None, extra: str) -> str:
 
 # ---------- 3. 미관측 판정 ----------
 
-def check_unobserved(db: Session, session_id: str) -> UnobservedCheckResult:
+def check_unobserved(db: Session, session_id: str, use_loan_status: bool = False) -> UnobservedCheckResult:
     """AI가 이 세션의 분석을 모두 보냈다고 알렸을 때 1회 실행한다."""
     session = db.scalar(select(ScanSession).where(ScanSession.id == session_id).with_for_update())
     if session is None:
@@ -250,7 +262,7 @@ def check_unobserved(db: Session, session_id: str) -> UnobservedCheckResult:
     unobserved = [c for c in registered if c.id not in seen]
     review_count = 0
     for copy in unobserved:
-        workflow, note = _unobserved_workflow(copy, completed)
+        workflow, note = _unobserved_workflow(copy, completed, use_loan_status)
         review_count += workflow is WorkflowStatus.REVIEW_REQUIRED
         db.add(VerificationResult(
             scan_session_id=session_id,
@@ -262,18 +274,24 @@ def check_unobserved(db: Session, session_id: str) -> UnobservedCheckResult:
             note=note,
         ))
 
+    # 청구기호 흐름 검사: 엉뚱한 책은 관리자 검토로 (알림 생성)
+    out_of_place = record_sequence(db, session_id)
+
     session.unobserved_checked_at = utcnow()
     db.commit()
     return UnobservedCheckResult(
         scan_session_id=session_id, observation_status=obs_status, registered_copy_count=len(registered),
-        unobserved_copy_count=len(unobserved), review_required_count=review_count,
+        unobserved_copy_count=len(unobserved), review_required_count=review_count, out_of_place_count=out_of_place,
         checked_at=session.unobserved_checked_at,
     )
 
 
-def _unobserved_workflow(copy: BookCopy, scan_completed: bool) -> tuple[WorkflowStatus | None, str]:
+def _unobserved_workflow(copy: BookCopy, scan_completed: bool,
+                         use_loan_status: bool) -> tuple[WorkflowStatus | None, str]:
     if not scan_completed:
         return None, "스캔이 완료되지 않아 판정 보류"
+    if not use_loan_status:
+        return None, "서가에서 관측되지 않음 (대출 여부를 알 수 없어 확인 대상 아님, 참고 기록)"
     if copy.loan_status is LoanStatus.CHECKED_OUT:
         return None, "대출 중이므로 서가에 없는 것이 정상"
     if copy.loan_status is LoanStatus.IN_TRANSIT:
@@ -291,14 +309,20 @@ def result_badge(row: VerificationResult) -> ResultBadge:
         return ResultBadge.MISPLACED_CONFIRMED
     if row.location_verdict is LocationVerdict.MISPLACED_SUSPECTED:
         return ResultBadge.MISPLACED_SUSPECTED
+    if row.sequence_status is ShelfOrderStatus.OUT_OF_PLACE:
+        return ResultBadge.OUT_OF_PLACE
     if row.observation_status is ObservationStatus.NOT_OBSERVED:
         return ResultBadge.NOT_OBSERVED
     if row.observation_status is ObservationStatus.SCAN_INCOMPLETE:
         return ResultBadge.SCAN_INCOMPLETE
     if row.identification_status in _RECOGNITION_ISSUES:
         return ResultBadge.RECOGNITION_ISSUE
+    if row.sequence_status is ShelfOrderStatus.OUT_OF_ORDER:
+        return ResultBadge.OUT_OF_ORDER
     if row.location_verdict is LocationVerdict.NORMAL:
         return ResultBadge.NORMAL
+    if row.sequence_status is ShelfOrderStatus.IN_ORDER:
+        return ResultBadge.NORMAL   # 등록 칸은 몰라도 청구기호 흐름상 제자리
     return ResultBadge.LOCATION_UNDETERMINED  # IDENTIFIED·CANDIDATE_ONLY인데 위치 판정 불가
 
 
@@ -343,7 +367,7 @@ def _to_read(row: VerificationResult, title: str | None, superseded_by: int | No
         id=row.id, scan_session_id=row.scan_session_id, observation_id=row.observation_id,
         book_copy_id=row.book_copy_id, title=title, identification_status=row.identification_status,
         location_verdict=row.location_verdict, observation_status=row.observation_status,
-        workflow_status=row.workflow_status, badge=result_badge(row), registered_slot_id=row.registered_slot_id,
+        workflow_status=row.workflow_status, sequence_status=row.sequence_status, badge=result_badge(row), registered_slot_id=row.registered_slot_id,
         observed_slot_id=row.observed_slot_id, reobservation_count=row.reobservation_count,
         superseded_by=superseded_by, note=row.note, created_at=row.created_at, updated_at=row.updated_at,
     )

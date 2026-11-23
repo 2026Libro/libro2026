@@ -17,7 +17,8 @@ class Confidence(BaseModel):
 
     detection: float = Field(ge=0.0, le=1.0)
     ocr: float = Field(ge=0.0, le=1.0)
-    identification: float = Field(ge=0.0, le=1.0)
+    identification: float = Field(default=0.0, ge=0.0, le=1.0,
+                                  description="AI가 등록번호를 직접 고른 경우의 신뢰도. 글자만 보내면 생략 (백엔드 매칭 점수 사용)")
 
 
 class Candidate(BaseModel):
@@ -43,6 +44,10 @@ class ObservationCreate(BaseModel):
     slot_id: SlotId
     detected_text: str | None = Field(default=None, max_length=500)
     book_copy_id: BookCopyId | None = None
+    call_number_text: str | None = Field(
+        default=None, max_length=200,
+        description="OCR로 읽은 청구기호 라벨 (줄바꿈 그대로 가능). book_copy_id·candidates가 없으면 백엔드가 이것으로 매칭")
+    title_text: str | None = Field(default=None, max_length=500, description="OCR로 읽은 서명 (매칭 보조)")
     confidence: Confidence
     candidates: list[Candidate] = Field(default_factory=list, max_length=20)
     reobservation_of: ObservationId | None = None
@@ -98,6 +103,7 @@ class ObservationRead(BaseModel):
     slot_id: str
     detected_text: str | None
     reported_book_copy_id: str | None
+    match_method: str | None
     detection_confidence: float
     ocr_confidence: float
     identification_confidence: float

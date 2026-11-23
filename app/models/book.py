@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.enums import LoanStatus, LocationCertainty, PhysicalLocationType
+from app.core.enums import LoanStatus, LocationCertainty, PhysicalLocationType, RegisteredLocationSource
 from app.db.base import Base, TimestampMixin, UtcDateTime, enum_type, utcnow
 
 
@@ -68,6 +68,10 @@ class BookLocation(TimestampMixin, Base):
 
     book_copy_id: Mapped[str] = mapped_column(ForeignKey("book_copies.id"), primary_key=True)
     slot_id: Mapped[str] = mapped_column(ForeignKey("shelf_slots.id"), index=True)
+    source: Mapped[RegisteredLocationSource] = mapped_column(
+        enum_type(RegisteredLocationSource), default=RegisteredLocationSource.MANUAL,
+        server_default=RegisteredLocationSource.MANUAL.value,
+    )
 
     book_copy: Mapped[BookCopy] = relationship(back_populates="registered_location")
 

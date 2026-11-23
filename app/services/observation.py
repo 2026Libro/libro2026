@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.errors import AppError
 from app.models import BookCopy, Observation, ObservationCandidate, ShelfSlot
 from app.schemas.common import ErrorCode
-from app.schemas.observation import ObservationCreate
+from app.schemas.observation import Candidate, ObservationCreate
+from app.services.catalog_match import get_index
 from app.services.scan_session import get_session
 from app.services.verification import Thresholds, verify_observation
 
@@ -65,11 +66,28 @@ def _validate_references(db: Session, data: ObservationCreate) -> None:
                        status_code=404)
 
 
+def _match_text(db: Session, data: ObservationCreate) -> tuple[ObservationCreate, str]:
+    """AI가 읽은 글자만 보낸 경우: 백엔드가 DB에서 복본을 찾아 book_copy_id·후보·식별 신뢰도를 채운다.
+
+    원본 요청(raw_payload)은 바꾸지 않는다. 재전송 비교도 원본 기준이다.
+    """
+    result = get_index(db).match(data.call_number_text, data.title_text)
+    return data.model_copy(update={
+        "book_copy_id": result.book_copy_id,
+        "candidates": [Candidate(book_copy_id=c, score=min(s, 1.0)) for c, s in result.candidates],
+        "confidence": data.confidence.model_copy(update={"identification": result.score}),
+    }), result.method
+
+
 def receive_observation(db: Session, data: ObservationCreate, th: Thresholds) -> tuple[Observation, bool]:
     """관측을 저장하고 검증한다. (관측, 새로 저장했는지)를 돌려준다. 재전송이면 다시 검증하지 않는다."""
     payload = data.model_dump(mode="json")
     if existing := db.get(Observation, data.observation_id):
         return _check_duplicate(existing, payload), False
+
+    match_method = None
+    if not data.book_copy_id and not data.candidates and (data.call_number_text or data.title_text):
+        data, match_method = _match_text(db, data)
 
     _validate_references(db, data)
 
@@ -82,6 +100,7 @@ def receive_observation(db: Session, data: ObservationCreate, th: Thresholds) ->
         slot_id=data.slot_id,
         detected_text=data.detected_text,
         reported_book_copy_id=data.book_copy_id,
+        match_method=match_method,
         detection_confidence=data.confidence.detection,
         ocr_confidence=data.confidence.ocr,
         identification_confidence=data.confidence.identification,

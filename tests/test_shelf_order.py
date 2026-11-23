@@ -49,7 +49,8 @@ def test_out_of_order(shelf, wrong):
 # ---------- 2. 관측 bbox·순번 ----------
 
 CALLS = {"EM9800001": "811.16 김54ㄱ", "EM9800002": "811.16 김54ㄱ c.2", "EM9800003": "811.16 김542ㄴ",
-         "EM9800004": "811.16 김55ㄷ", "EM9800005": "823 A12b"}
+         "EM9800004": "811.16 김55ㄷ", "EM9800005": "823 A12b", "EM9800006": "811.16 박1ㄱ",
+         "EM9800007": "330.9 박12ㄱ"}
 
 
 @pytest.fixture
@@ -68,7 +69,8 @@ def shelf_env(client, db):
         assert res.status_code == 201, res.text
     session_id = client.post("/scan-sessions", json={"robot_id": "R980", "shelf_id": "S-01"},
                              headers=ADMIN_HEADERS).json()["id"]
-    return {"session_id": session_id, "ai": {"X-API-Key": issue_api_key(db, DeviceType.AI, "ai-order")}}
+    return {"session_id": session_id, "ai": {"X-API-Key": issue_api_key(db, DeviceType.AI, "ai-order")},
+            "robot": {"X-API-Key": issue_api_key(db, DeviceType.ROBOT, "R980")}}
 
 
 _n = iter(range(1, 10_000))
@@ -111,7 +113,7 @@ def test_old_payload_without_position_still_works(client, shelf_env):
     assert obs["order"] is None
 
 
-# ---------- 3. 같은 칸 안 순서 검사 ----------
+# ---------- 3. 서가 청구기호 흐름 검사 ----------
 
 def order_check(client, env, slot="S-01-01"):
     res = client.get(f"/scan-sessions/{env['session_id']}/slots/{slot}/order-check")
@@ -119,17 +121,41 @@ def order_check(client, env, slot="S-01-01"):
     return res.json()
 
 
-def test_order_check_flags_misplaced_book(client, shelf_env):
-    for order, copy_id in enumerate(["EM9800001", "EM9800003", "EM9800005", "EM9800004"], start=1):
+def shelf_check(client, env):
+    res = client.get(f"/scan-sessions/{env['session_id']}/order-check")
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def statuses(books):
+    return [(b["book_copy_id"], b["status"]) for b in books]
+
+
+def test_out_of_place_vs_out_of_order(client, shelf_env):
+    #  김54 → 김55 → 김542(같은 811 안에서 순서만 틀림) → 330.9(경제 책: 엉뚱한 책) → 박1
+    for order, copy_id in enumerate(["EM9800001", "EM9800004", "EM9800003", "EM9800007", "EM9800006"], start=1):
         observe(client, shelf_env, order, copy_id)
     result = order_check(client, shelf_env)
-    assert result["out_of_order_count"] == 1
+    assert (result["out_of_order_count"], result["out_of_place_count"]) == (1, 1)
     [image] = result["images"]
     assert image["image_ref"] == "img/s01-01.jpg" and image["image_width"] == 1920
-    assert [(b["order"], b["book_copy_id"], b["status"]) for b in image["books"]] == [
-        (1, "EM9800001", "IN_ORDER"), (2, "EM9800003", "IN_ORDER"),
-        (3, "EM9800005", "OUT_OF_ORDER"), (4, "EM9800004", "IN_ORDER")]
-    assert image["books"][2]["call_number"] == "823 A12b"
+    assert statuses(image["books"]) == [("EM9800001", "IN_ORDER"), ("EM9800004", "IN_ORDER"),
+                                        ("EM9800003", "OUT_OF_ORDER"), ("EM9800007", "OUT_OF_PLACE"),
+                                        ("EM9800006", "IN_ORDER")]
+    assert image["books"][3]["neighbors"] == ["811.16 김55ㄷ", "811.16 박1ㄱ"]   # 판단 근거
+
+
+def test_flow_continues_across_slots(client, shelf_env):
+    observe(client, shelf_env, 1, "EM9800001", image="img/1.jpg")
+    observe(client, shelf_env, 2, "EM9800004", image="img/1.jpg")
+    observe(client, shelf_env, 1, "EM9800007", image="img/2.jpg", slot="S-01-02")   # 다음 칸 맨 앞에 경제 책
+    observe(client, shelf_env, 2, "EM9800006", image="img/2.jpg", slot="S-01-02")
+
+    shelf = shelf_check(client, shelf_env)
+    assert (shelf["shelf_id"], shelf["out_of_place_count"]) == ("S-01", 1)
+    assert [s["slot_id"] for s in shelf["slots"]] == ["S-01-01", "S-01-02"]
+    assert statuses(order_check(client, shelf_env, "S-01-02")["images"][0]["books"]) == [
+        ("EM9800007", "OUT_OF_PLACE"), ("EM9800006", "IN_ORDER")]           # 사진 한 장만 보면 못 찾는 경우
 
 
 def test_candidates_of_same_book_use_base_call_number(client, shelf_env):
@@ -141,20 +167,62 @@ def test_candidates_of_same_book_use_base_call_number(client, shelf_env):
     assert books[2]["status"] == "UNIDENTIFIED"
 
 
-def test_each_image_checked_separately_and_reobservation_replaces(client, shelf_env):
-    observe(client, shelf_env, 1, "EM9800004", image="img/a.jpg")
-    wrong = observe(client, shelf_env, 2, "EM9800001", image="img/a.jpg")      # 김55 뒤에 김54 → 순서 틀림
-    observe(client, shelf_env, 1, "EM9800001", image="img/b.jpg")               # 다른 사진의 순번 1
-    assert order_check(client, shelf_env)["out_of_order_count"] == 1
+def test_reobservation_replaces_old_result(client, shelf_env):
+    observe(client, shelf_env, 1, "EM9800001")
+    wrong = observe(client, shelf_env, 2, "EM9800007")
+    observe(client, shelf_env, 3, "EM9800006")
+    assert order_check(client, shelf_env)["out_of_place_count"] == 1
 
-    observe(client, shelf_env, 2, "EM9800005", image="img/a.jpg", reobservation_of=wrong["id"])
-    images = {i["image_ref"]: i for i in order_check(client, shelf_env)["images"]}
-    assert [b["book_copy_id"] for b in images["img/a.jpg"]["books"]] == ["EM9800004", "EM9800005"]
-    assert images["img/b.jpg"]["out_of_order_count"] == 0
+    observe(client, shelf_env, 2, "EM9800003", reobservation_of=wrong["id"])   # 다시 보니 김542
+    books = order_check(client, shelf_env)["images"][0]["books"]
+    assert statuses(books) == [("EM9800001", "IN_ORDER"), ("EM9800003", "IN_ORDER"), ("EM9800006", "IN_ORDER")]
+
+
+def test_analysis_complete_records_and_alerts_out_of_place(client, shelf_env):
+    observe(client, shelf_env, 1, "EM9800001")
+    observe(client, shelf_env, 2, "EM9800007")
+    observe(client, shelf_env, 3, "EM9800006")
+    client.post(f"/scan-sessions/{shelf_env['session_id']}/finish", json={"status": "COMPLETED"},
+                headers=shelf_env["robot"])
+    res = client.post(f"/scan-sessions/{shelf_env['session_id']}/analysis-complete", headers=shelf_env["ai"])
+    assert res.status_code == 200, res.text
+    assert res.json()["out_of_place_count"] == 1
+
+    page = client.get("/verifications", params={"scan_session_id": shelf_env["session_id"],
+                                                "observation_status": "OBSERVED", "limit": 100}).json()
+    rows = {v["book_copy_id"]: v for v in page["items"]}
+    wrong = rows["EM9800007"]
+    assert (wrong["sequence_status"], wrong["badge"], wrong["workflow_status"]) ==         ("OUT_OF_PLACE", "OUT_OF_PLACE", "REVIEW_REQUIRED")
+    assert "청구기호 흐름 이탈" in wrong["note"]
+    assert (rows["EM9800001"]["sequence_status"], rows["EM9800001"]["badge"]) == ("IN_ORDER", "NORMAL")
+
+    alerts = client.get("/alerts", params={"alert_type": "OUT_OF_PLACE"}, headers=ADMIN_HEADERS).json()
+    assert [a["book_copy_id"] for a in alerts["items"]] == ["EM9800007"]
 
 
 def test_order_check_empty_slot_and_errors(client, shelf_env):
     assert order_check(client, shelf_env, "S-01-02") == {
-        "scan_session_id": shelf_env["session_id"], "slot_id": "S-01-02", "out_of_order_count": 0, "images": []}
+        "scan_session_id": shelf_env["session_id"], "slot_id": "S-01-02", "out_of_order_count": 0,
+        "out_of_place_count": 0, "images": []}
+    assert shelf_check(client, shelf_env)["slots"] == []
     assert client.get(f"/scan-sessions/{shelf_env['session_id']}/slots/S-01/order-check").status_code == 422
     assert client.get("/scan-sessions/SCAN-none/slots/S-01-01/order-check").status_code == 404
+    assert client.get("/scan-sessions/SCAN-none/order-check").status_code == 404
+
+
+@pytest.mark.parametrize("verdict, sequence, expected", [
+    ("NORMAL", "OUT_OF_PLACE", "OUT_OF_PLACE"),              # 등록 칸은 맞아도 흐름상 엉뚱한 책
+    ("MISPLACED_SUSPECTED", "OUT_OF_PLACE", "MISPLACED_SUSPECTED"),
+    ("NORMAL", "OUT_OF_ORDER", "OUT_OF_ORDER"),
+    ("UNDETERMINED", "IN_ORDER", "NORMAL"),                  # 등록 칸이 없어도 흐름상 제자리
+    ("UNDETERMINED", None, "LOCATION_UNDETERMINED"),
+])
+def test_badge_with_sequence(verdict, sequence, expected):
+    from app.core.enums import IdentificationStatus, LocationVerdict, ObservationStatus, ShelfOrderStatus
+    from app.models import VerificationResult
+    from app.services.verification import result_badge
+    row = VerificationResult(observation_status=ObservationStatus.OBSERVED,
+                             identification_status=IdentificationStatus.IDENTIFIED,
+                             location_verdict=LocationVerdict(verdict),
+                             sequence_status=ShelfOrderStatus(sequence) if sequence else None)
+    assert result_badge(row) == expected

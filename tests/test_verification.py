@@ -174,7 +174,7 @@ def test_repeated_failure_goes_to_review(client, env):
     assert v["reobservation_count"] == 2
 
 
-def test_checked_out_copy_seen_on_shelf_goes_to_review(client, env):
+def test_checked_out_copy_seen_on_shelf_goes_to_review(client, env, loan_tracking):
     v = send(client, env, "T-01-01", copy_id="BOOK-900128")
     assert v["location_verdict"] == "NORMAL"
     assert v["workflow_status"] == "REVIEW_REQUIRED"
@@ -213,7 +213,7 @@ def _analysis_complete(client, env):
     return client.post(f"/scan-sessions/{env['session_id']}/analysis-complete", headers=env["ai"])
 
 
-def test_unobserved_after_completed_scan(client, db, env):
+def test_unobserved_after_completed_scan(client, db, env, loan_tracking):
     send(client, env, "T-01-03", copy_id="BOOK-900127")
     _finish(client, env)
 
@@ -268,7 +268,7 @@ def test_analysis_complete_requires_ai_key(client, env):
     assert res.status_code == 403
 
 
-def test_late_observation_closes_unobserved_row(client, env):
+def test_late_observation_closes_unobserved_row(client, env, loan_tracking):
     _finish(client, env)
     _analysis_complete(client, env)
     send(client, env, "T-01-03", copy_id="BOOK-900127")  # AI 결과가 뒤늦게 도착

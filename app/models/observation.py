@@ -10,6 +10,7 @@ from app.core.enums import (
     LocationVerdict,
     ObservationStatus,
     ScanSessionStatus,
+    ShelfOrderStatus,
     WorkflowStatus,
 )
 from app.db.base import Base, TimestampMixin, UtcDateTime, enum_type, utcnow
@@ -58,6 +59,9 @@ class Observation(Base):
     order: Mapped[int | None] = mapped_column("order_in_image")
     image_width: Mapped[int | None]
     image_height: Mapped[int | None]
+    # 백엔드 매칭: AI가 등록번호 대신 읽은 글자(call_number_text·title_text)만 보낸 경우의 매칭 방법
+    # EXACT / SAME_BOOK / SIMILAR / TITLE / NONE. AI가 등록번호를 직접 보냈으면 NULL
+    match_method: Mapped[str | None] = mapped_column(String(16))
     captured_at: Mapped[datetime] = mapped_column(UtcDateTime)
     received_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     # 원본 JSON 보관. 아직 합의되지 않은 필드가 바뀌어도 원본을 다시 확인할 수 있다.
@@ -109,6 +113,9 @@ class VerificationResult(TimestampMixin, Base):
     # 판정 당시 값 스냅샷 (등록 위치가 나중에 바뀌어도 당시 근거를 남긴다)
     registered_slot_id: Mapped[str | None] = mapped_column(ForeignKey("shelf_slots.id"))
     observed_slot_id: Mapped[str | None] = mapped_column(ForeignKey("shelf_slots.id"))
+
+    # 청구기호 흐름 검사 결과 (AI 분석 완료 시점에 기록). 위치 정보(order)가 없던 관측·미관측 행은 NULL
+    sequence_status: Mapped[ShelfOrderStatus | None] = mapped_column(enum_type(ShelfOrderStatus))
 
     reobservation_count: Mapped[int] = mapped_column(default=0)
     note: Mapped[str | None] = mapped_column(Text)

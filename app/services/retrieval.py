@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.config import get_settings
 from app.core.enums import (
     AdminActionType,
     EventSource,
@@ -56,7 +57,7 @@ def check_conditions(db: Session, verification: VerificationResult, exclude_task
         return problems
 
     copy = db.get(BookCopy, verification.book_copy_id, options=[selectinload(BookCopy.registered_location)])
-    if copy.loan_status is not LoanStatus.AVAILABLE:
+    if get_settings().loan_status_reliable and copy.loan_status is not LoanStatus.AVAILABLE:
         problems.append(f"대출 상태가 {copy.loan_status}")
     if (copy.physical_location_type is not PhysicalLocationType.SHELF
             or copy.physical_slot_id != verification.observed_slot_id

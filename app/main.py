@@ -16,6 +16,7 @@ from app.routers import (
     admin,
     basket,
     books,
+    call_ranges,
     copies,
     dashboard,
     health,
@@ -53,6 +54,7 @@ app.include_router(health.router)
 app.include_router(books.router)
 app.include_router(copies.router)
 app.include_router(shelves.router)
+app.include_router(call_ranges.router)
 app.include_router(scan_sessions.router)
 app.include_router(observations.router)
 app.include_router(verifications.router)

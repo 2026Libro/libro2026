@@ -100,7 +100,7 @@ def test_confirmed_misplacement_alerts_and_auto_resolve_on_approval(client, db, 
         ("MISPLACED_CONFIRMED", "RESOLVED", "system"), ("RETRIEVAL_APPROVAL_REQUIRED", "RESOLVED", "system")}
 
 
-def test_not_observed_alert_only_for_available_copy(client, env):
+def test_not_observed_alert_only_for_available_copy(client, env, loan_tracking):
     robot(client, env, f"/tasks/{env['scan_task']}/ack", accepted=True)
     robot(client, env, f"/tasks/{env['scan_task']}/result", status="COMPLETED")
     client.post(f"/scan-sessions/{env['session_id']}/analysis-complete", headers=env["ai"])

@@ -27,11 +27,19 @@ class LocationVerdict(StrEnum):
     UNDETERMINED = "UNDETERMINED"
 
 
-class ShelfOrderStatus(StrEnum):
-    """같은 칸 안 청구기호 순서 검사 결과 (책 1권 기준)."""
+class RegisteredLocationSource(StrEnum):
+    """등록 위치를 누가 정했나."""
 
-    IN_ORDER = "IN_ORDER"            # 청구기호 순서에 맞게 꽂혀 있음
-    OUT_OF_ORDER = "OUT_OF_ORDER"    # 앞뒤 책과 청구기호 순서가 맞지 않음
+    MANUAL = "MANUAL"          # 관리자가 직접 지정 (범위표 적용 시 덮어쓰지 않음)
+    CALL_RANGE = "CALL_RANGE"  # 칸별 청구기호 범위표로 계산
+
+
+class ShelfOrderStatus(StrEnum):
+    """서가 청구기호 흐름 검사 결과 (책 1권 기준). 서가 전체를 칸 순서 → 사진 → 왼쪽부터 순번으로 이어 본다."""
+
+    IN_ORDER = "IN_ORDER"            # 청구기호 흐름에 맞게 꽂혀 있음
+    OUT_OF_ORDER = "OUT_OF_ORDER"    # 순서만 어긋남 (앞뒤 책과 같은 분류 근처, 가벼운 오류)
+    OUT_OF_PLACE = "OUT_OF_PLACE"    # 엉뚱한 책 (앞뒤 책과 분류번호 앞 3자리가 다름)
     UNIDENTIFIED = "UNIDENTIFIED"    # 청구기호를 알 수 없어 검사에서 뺌 (식별 실패, 후보가 서로 다른 책)
 
 
@@ -43,8 +51,10 @@ class ResultBadge(StrEnum):
 
     MISPLACED_CONFIRMED = "MISPLACED_CONFIRMED"  # 오배가 확정
     MISPLACED_SUSPECTED = "MISPLACED_SUSPECTED"  # 오배가 의심
+    OUT_OF_PLACE = "OUT_OF_PLACE"                # 엉뚱한 책 (청구기호 흐름에서 분류가 다른 책)
     NOT_OBSERVED = "NOT_OBSERVED"                # 스캔 완료 범위에서 미관측 (분실 아님)
     RECOGNITION_ISSUE = "RECOGNITION_ISSUE"      # 인식 실패·불확실·미등록 도서
+    OUT_OF_ORDER = "OUT_OF_ORDER"                # 순서만 어긋남 (같은 분류 근처)
     LOCATION_UNDETERMINED = "LOCATION_UNDETERMINED"  # 책은 알아봤으나 위치 판정 불가 (후보가 여러 칸에 걸침, 등록 위치 없음)
     SCAN_INCOMPLETE = "SCAN_INCOMPLETE"          # 스캔 중단으로 판단 보류
     NORMAL = "NORMAL"                            # 제자리
@@ -136,6 +146,7 @@ class AlertType(StrEnum):
 
     MISPLACED_SUSPECTED = "MISPLACED_SUSPECTED"        # 재관측을 반복해도 의심 상태
     MISPLACED_CONFIRMED = "MISPLACED_CONFIRMED"        # 오배가 확정
+    OUT_OF_PLACE = "OUT_OF_PLACE"                      # 엉뚱한 책 (청구기호 흐름 검사)
     RECOGNITION_FAILED = "RECOGNITION_FAILED"          # 인식 실패·불확실 반복
     NOT_OBSERVED = "NOT_OBSERVED"                      # 스캔 완료 범위에서 미관측
     REVIEW_REQUIRED = "REVIEW_REQUIRED"                # 기타 확인 필요 (미등록 도서, 대출 중 도서 관측 등)

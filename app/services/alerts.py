@@ -26,6 +26,7 @@ from app.core.enums import (
     ObservationStatus,
     RobotConnectionStatus,
     RobotTaskStatus,
+    ShelfOrderStatus,
     WorkflowStatus,
 )
 from app.core.errors import AppError
@@ -59,6 +60,8 @@ def _verification_alert(v: VerificationResult) -> tuple[AlertType, str]:
         return AlertType.MISPLACED_CONFIRMED, f"{copy}: 오배가 확정 (등록 {v.registered_slot_id} / 관측 {v.observed_slot_id}){note}"
     if v.location_verdict is LocationVerdict.MISPLACED_SUSPECTED:
         return AlertType.MISPLACED_SUSPECTED, f"{copy}: 오배가 의심 (관측 {v.observed_slot_id}){note}"
+    if v.sequence_status is ShelfOrderStatus.OUT_OF_PLACE:
+        return AlertType.OUT_OF_PLACE, f"{copy} @ {v.observed_slot_id}: 엉뚱한 책 (청구기호 흐름 이탈){note}"
     if v.identification_status in (IdentificationStatus.FAILED, IdentificationStatus.UNCERTAIN):
         return (AlertType.RECOGNITION_FAILED,
                 f"{v.observed_slot_id}: 인식 {v.identification_status} (재관측 {v.reobservation_count}회){note}")

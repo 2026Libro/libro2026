@@ -321,11 +321,15 @@
 |---|---|---|---|
 | 1 | `MISPLACED_CONFIRMED` | `location_verdict = MISPLACED_CONFIRMED` | 오배가 확정 |
 | 2 | `MISPLACED_SUSPECTED` | `location_verdict = MISPLACED_SUSPECTED` (IDENTIFIED, 또는 CANDIDATE_ONLY인데 후보가 전부 다른 칸 소속) | 오배가 의심 |
-| 3 | `NOT_OBSERVED` | `observation_status = NOT_OBSERVED` | 미관측 (분실 아님) |
-| 4 | `SCAN_INCOMPLETE` | `observation_status = SCAN_INCOMPLETE` | 판단 보류 (스캔 중단) |
-| 5 | `RECOGNITION_ISSUE` | `identification_status`가 FAILED / UNCERTAIN / UNREGISTERED | 인식 확인 필요 |
-| 6 | `NORMAL` | `location_verdict = NORMAL` | 정상 |
-| 7 | `LOCATION_UNDETERMINED` | 위에 해당하지 않음 (아래 설명) | 위치 판정 보류 |
+| 3 | `OUT_OF_PLACE` | `sequence_status = OUT_OF_PLACE` (청구기호 흐름에서 분류가 다른 책) | 엉뚱한 책 |
+| 4 | `NOT_OBSERVED` | `observation_status = NOT_OBSERVED` | 미관측 (분실 아님) |
+| 5 | `SCAN_INCOMPLETE` | `observation_status = SCAN_INCOMPLETE` | 판단 보류 (스캔 중단) |
+| 6 | `RECOGNITION_ISSUE` | `identification_status`가 FAILED / UNCERTAIN / UNREGISTERED | 인식 확인 필요 |
+| 7 | `OUT_OF_ORDER` | `sequence_status = OUT_OF_ORDER` (같은 분류 안에서 순서만 어긋남) | 순서 오류 |
+| 8 | `NORMAL` | `location_verdict = NORMAL`, 또는 등록 칸이 없어도 `sequence_status = IN_ORDER` | 정상 |
+| 9 | `LOCATION_UNDETERMINED` | 위에 해당하지 않음 (아래 설명) | 위치 판정 보류 |
+
+`sequence_status`(청구기호 흐름 검사)는 AI가 분석 완료를 알릴 때 기록됩니다. 그 전에는 null입니다. 자세한 내용은 4-4절을 보세요.
 
 **정상 조건**
 - `location_verdict = NORMAL`이면 정상입니다. 아래 두 경우가 해당합니다.
@@ -345,6 +349,35 @@
 - 책은 알아봤는데 위치만 판정할 수 없으면 `LOCATION_UNDETERMINED`입니다. 후보가 섞여 있거나, 등록 위치가 없는 복본인 경우입니다.
 
 배지와 별개로, `workflow_status`는 "처리 상태"로 따로 표시합니다(예: 재관측 중, 검토 필요, 완료).
+
+### 4-4. 청구기호 흐름 검사 (엉뚱한 책 찾기) [구현됨]
+
+도서관은 청구기호 순으로 책을 꽂습니다. 그래서 서가를 한 줄로 이어 보고, 흐름에서 튀는 책을 찾습니다. 칸별 정확한 위치(범위표)가 없어도 동작합니다.
+
+- 서가 전체: `GET /scan-sessions/{session_id}/order-check`
+- 칸 하나: `GET /scan-sessions/{session_id}/slots/{slot_id}/order-check` (판정은 서가 전체 흐름으로 하고, 이 칸의 책만 보여 줌)
+- 순서: 칸 번호 순 → 칸 안 사진 순(촬영 시각) → 사진 안 왼쪽부터 `order`
+- 관측에 `image_ref`와 `order`가 있어야 대상이 됩니다.
+
+| status | 의미 |
+|---|---|
+| `IN_ORDER` | 흐름에 맞음 |
+| `OUT_OF_ORDER` | 순서만 어긋남. 앞뒤 책과 같은 분류(분류번호 앞 3자리) 근처 |
+| `OUT_OF_PLACE` | 엉뚱한 책. 흐름상 앞·뒤 책과 분류번호 앞 3자리가 다름. `neighbors`에 앞뒤 청구기호(판단 근거)가 옴 |
+| `UNIDENTIFIED` | 청구기호를 알 수 없어 검사에서 뺌 |
+
+```json
+{"scan_session_id": "SCAN-…", "shelf_id": "A-01", "out_of_order_count": 1, "out_of_place_count": 1,
+ "slots": [{"slot_id": "A-01-01", "out_of_order_count": 1, "out_of_place_count": 1,
+   "images": [{"image_ref": "img/a.jpg", "image_url": "/observations/OBS-1/image", "image_width": 1920, "image_height": 1080,
+     "books": [{"order": 4, "observation_id": "OBS-4", "book_copy_id": "EM0099999", "call_number": "330.9 박12ㄱ",
+                "title": "…", "bbox": [400, 0, 80, 600], "status": "OUT_OF_PLACE",
+                "neighbors": ["811.16 김55ㄷ", "811.16 박1ㄱ"]}]}]}]}
+```
+
+- 조회 API는 요청할 때마다 최신 관측으로 계산합니다.
+- AI 분석 완료 시점에는 결과가 검증 결과의 `sequence_status`에 저장됩니다. `OUT_OF_PLACE`인 책은 다른 처리가 걸려 있지 않으면 `workflow_status = REVIEW_REQUIRED`가 되고, 관리자 알림 `OUT_OF_PLACE`가 생깁니다.
+- 사진 위에 책 위치를 그릴 때는 `bbox`(원본 픽셀 `[x, y, width, height]`)와 `image_width`·`image_height`로 축소 비율을 맞추세요.
 
 ### 4-3. 대체된 결과 처리 규칙 [구현됨, 확정]
 
@@ -405,7 +438,7 @@
 
 **현재 상태**
 - 이미지 조회 API와 `image_url`은 반영했습니다(3-6절). 남은 것은 파일 보관 위치(AI 서버 공유 폴더인지, 백엔드 업로드인지)를 AI 담당자와 정하는 일입니다.
-- 책등 위치 좌표(bounding box)는 받지도 저장하지도 않습니다.
+- **좌표는 AI와 합의해 반영했습니다.** 관측에 `bbox` `[x, y, width, height]`(원본 픽셀), `order`(사진 안 왼쪽부터 순번), `image_width`, `image_height`가 옵니다(4-4절). 아래 제안 중 좌표 부분은 완료입니다.
 
 **제안**
 - **좌표**
