@@ -1,52 +1,49 @@
 # 2026Libro GitHub 협업 정책
 
-## 1. 프로젝트
+## 1. 브랜치와 작업 방식
 
-- 목적: AI 기반 자율주행 도서 인출 및 관리 로봇
-- GitHub Organization: `2026Libro`
-- Repository: `libro2026`
-- 협업 방식: 단일 Repository + 역할별 장기 브랜치 + Issue별 기능 브랜치
-- 담당 역할: AI / Backend / Frontend / Hardware
+단일 저장소 `2026Libro/libro2026`에서 협업한다.
 
-## 2. 브랜치
-
-| 브랜치 | 목적 |
+| 브랜치 | 용도 |
 |---|---|
-| `main` | 전체 프로젝트의 안정적인 통합 버전 |
-| `ai` | AI 기능 개발 및 검증 |
-| `be` | 백엔드 개발 및 검증 |
-| `fe` | 프론트엔드 개발 및 검증 |
-| `hw` | 하드웨어·로봇 제어 개발 및 검증 |
-| `feature/#번호-기능명` | 개별 Issue 작업 |
+| `main` | 안정적인 통합 코드 |
+| `ai` | AI 개발·검증 |
+| `be` | Backend 개발·검증 |
+| `fe` | Frontend 개발·검증 |
+| `hw` | Hardware 개발·검증 |
 
-`main`과 역할별 브랜치는 장기 유지한다. 기능 브랜치는 해당 Issue 작업을 완료하고 PR을 병합한 후 삭제한다.
+이 다섯 브랜치만 사용한다. 별도 feature 브랜치를 생성하지 않는다.
+개발·Commit·Push는 담당 역할 브랜치에서 수행하며 main 직접 개발·Push와 강제 Push는 금지한다.
 
-## 3. 작업 순서
+## 2. 작업 순서
 
-초기 설정 예외: 팀장의 승인 아래 최초 저장소 생성, 정책·템플릿·기본 구조의 첫 커밋 및 `main` Push, 역할별 장기 브랜치 생성은 허용한다. 초기 설정 이후에는 아래 규칙을 적용한다.
+1. 기능 개발 전 Issue 생성
+2. 담당 역할 브랜치로 이동하고 원격 변경사항과 최신 main 반영
+3. 개발·테스트 후 커밋 컨벤션에 맞춰 Commit
+4. 담당 역할 브랜치를 Push
+5. 담당 역할 브랜치 → main으로 PR 생성
+6. 작성자 외 팀원 최소 1명 승인 및 필수 검사 통과 후 Merge
+7. 역할 브랜치는 삭제하지 않고 계속 사용
 
-1. `main` 및 역할별 장기 브랜치에서 직접 개발하거나 Push하지 않는다.
-2. 모든 기능 개발 전에 GitHub Issue를 생성한다.
-3. Issue 번호를 기준으로 기능 브랜치를 생성한다.
-4. 기능 브랜치는 반드시 최신 `main`에서 생성한다.
-5. 하나의 Issue는 하나의 기능 브랜치에서 작업한다.
-6. 변경사항을 검증하고 커밋 규칙에 따라 커밋한다.
-7. 기능 브랜치를 GitHub에 Push한다.
-8. `main`을 대상으로 PR을 생성한다.
-9. 최소 1명의 팀원 리뷰와 필수 검사 통과 후 병합한다.
-10. 병합 후 기능 브랜치를 삭제한다.
-11. 새로운 작업 전 `main`을 최신화하고 새 기능 브랜치를 생성한다.
-12. `main`의 변경사항은 각 역할 브랜치에 정기적으로 반영한다.
+같은 역할의 작업은 하나의 브랜치를 공유하므로 작업 범위를 사전에 조율한다.
 
-## 4. 브랜치 이름
+## 3. 새로운 작업 시작 전
 
-형식: `feature/#이슈번호-기능명`
+작업 중인 변경사항을 먼저 커밋하거나 보관한다. 아래는 AI 예시이며 다른 파트는 ai를 be, fe, hw로 바꾼다.
 
-기능명은 영문 소문자와 하이픈을 사용하며 브랜치 이름은 Repository 전체에서 유일해야 한다.
+```bash
+git fetch origin
+git switch ai
+git pull --ff-only origin ai
+git merge origin/main
+```
 
-예: `feature/#1-book-detection`, `feature/#2-paddleocr`, `feature/#3-observations-api`, `feature/#4-dashboard`, `feature/#5-slam-mapping`.
+충돌이 있으면 담당자와 협의하여 해결한다. 다른 팀원 변경을 덮어쓰지 않는다.
 
-터미널에서는 이름을 따옴표로 감싼다: `git switch -c 'feature/#1-book-detection'`.
+## 4. PR 병합 방식
+
+역할 브랜치를 계속 재사용하므로 PR은 merge commit 방식으로 병합한다.
+역할 브랜치는 병합 후 삭제하지 않는다. 최신 main은 각 역할 브랜치에 merge로 반영한다.
 
 ## 5. 커밋
 
@@ -86,7 +83,7 @@
 
 ## 7. Pull Request
 
-- 기능 PR: `feature/#번호-기능명` → `main`
+- PR: `ai`, `be`, `fe`, `hw` → `main`
 - 기능 PR 제목: `[#이슈번호] 작업 내용`
 
 본문 필수 항목:
@@ -135,7 +132,7 @@ Codex는 [AGENTS.md](AGENTS.md)를 따른다. 작업 전 Repository·브랜치, 
 ## 11. 통합 및 동기화
 
 - 모든 기능 PR은 `main`을 대상으로 한다.
-- `ai`, `be`, `fe`, `hw`는 역할별 공유·검증용으로 유지하며 기능 브랜치의 기준으로 사용하지 않는다.
+- `ai`, `be`, `fe`, `hw`에서 직접 개발하고 해당 브랜치로 Push한다.
 - `main`에 통합된 변경사항은 다른 역할 브랜치에도 반영한다.
 - 공통 API 명세 변경은 관련 파트에 반드시 공유한다.
 - AI·Backend·Frontend·Hardware 간 통합 테스트를 수행한다.
@@ -144,7 +141,8 @@ Codex는 [AGENTS.md](AGENTS.md)를 따른다. 작업 전 Repository·브랜치, 
 
 ## 12. 금지사항
 
-- `main` 또는 역할 브랜치 직접 개발
+- `main` 직접 개발·Push
+- 새 feature 브랜치 생성
 - Issue 없는 기능 개발
 - 승인 없는 강제 Push
 - 다른 팀원의 변경사항 무단 삭제
@@ -155,16 +153,3 @@ Codex는 [AGENTS.md](AGENTS.md)를 따른다. 작업 전 Repository·브랜치, 
 - 미완료 기능을 완료한 것으로 표시
 
 이 규칙을 2026Libro 프로젝트의 기본 GitHub 협업 정책으로 적용한다.
-
-## 13. 새로운 작업 시작 전
-
-작업 중인 변경사항을 먼저 보존한 뒤 실행한다. 아래 Issue 번호와 기능명은 실제 작업에 맞게 바꾼다.
-
-```bash
-git switch main
-git pull --ff-only origin main
-git switch -c 'feature/#1-paddleocr'
-```
-
-Repository: https://github.com/2026Libro/libro2026
-모든 파트는 이 단일 저장소에서 협업한다. 브랜치 약칭과 디렉터리 이름은 별개이며 기존 폴더는 이동하지 않는다.
