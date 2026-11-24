@@ -1,0 +1,29 @@
+# Local environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+.venv311/
+.venv-*/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.pem
+*.key
+
+# Local datasets, generated output and model weights
+/data/
+/outputs/
+*.pt
+*.pth
+*.onnx
+*.weights
+
+# Build and tool caches
+node_modules/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
