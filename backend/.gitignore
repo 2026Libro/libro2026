@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/images/
+data/backups/
+
+# 로컬 데이터 (DB 적재용·테스트용, 업로드 금지)
+data/
+LIBRO2026_*.csv
+jbu_*
+*.sqlite
+.Rhistory
+captures/
