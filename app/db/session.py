@@ -24,3 +24,8 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_session_factory():
+    """백그라운드 작업(요청이 끝난 뒤 실행)이 쓸 세션 생성기. 테스트에서는 테스트 세션으로 바꾼다."""
+    return SessionLocal

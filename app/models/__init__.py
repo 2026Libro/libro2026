@@ -6,7 +6,7 @@ from app.db.base import Base
 from app.models.admin import AdminAction, Alert
 from app.models.book import Book, BookCopy, BookLocation, BookLocationHistory
 from app.models.device import DeviceCredential
-from app.models.observation import Observation, ObservationCandidate, ScanSession, VerificationResult
+from app.models.observation import Observation, ObservationCandidate, ScanImage, ScanSession, VerificationResult
 from app.models.robot import BasketItem, Robot, RobotTask, TaskEvent
 from app.models.shelf import Shelf, ShelfSlot, SlotCallRange, SlotCallRangeHistory
 
@@ -24,6 +24,7 @@ __all__ = [
     "ObservationCandidate",
     "Robot",
     "RobotTask",
+    "ScanImage",
     "ScanSession",
     "Shelf",
     "ShelfSlot",

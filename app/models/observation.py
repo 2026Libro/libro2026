@@ -9,6 +9,7 @@ from app.core.enums import (
     IdentificationStatus,
     LocationVerdict,
     ObservationStatus,
+    OcrStatus,
     ScanSessionStatus,
     ShelfOrderStatus,
     WorkflowStatus,
@@ -35,6 +36,26 @@ class ScanSession(TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     # AI가 분석 완료를 알려 미관측 판정을 마친 시각. 한 세션에 한 번만 판정한다.
     unobserved_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+
+
+class ScanImage(Base):
+    """로봇이 올린 사진 1장. 백엔드가 저장한 뒤 AI OCR에 보내고, 결과로 책마다 관측(Observation)을 만든다."""
+
+    __tablename__ = "scan_images"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # IMG-…
+    scan_session_id: Mapped[str] = mapped_column(ForeignKey("scan_sessions.id"), index=True)
+    slot_id: Mapped[str] = mapped_column(ForeignKey("shelf_slots.id"), index=True)
+    image_ref: Mapped[str] = mapped_column(String(500))      # IMAGE_ROOT 기준 상대 경로
+    content_type: Mapped[str] = mapped_column(String(32))
+    image_width: Mapped[int | None]
+    image_height: Mapped[int | None]
+    captured_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    received_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    ocr_status: Mapped[OcrStatus] = mapped_column(enum_type(OcrStatus), default=OcrStatus.PENDING, index=True)
+    ocr_error: Mapped[str | None] = mapped_column(String(500))
+    book_count: Mapped[int | None]                             # OCR이 찾은 책 수
+    ocr_completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
 
 class Observation(Base):
@@ -70,6 +91,19 @@ class Observation(Base):
     candidates: Mapped[list["ObservationCandidate"]] = relationship(
         back_populates="observation", order_by="ObservationCandidate.rank"
     )
+
+    # AI가 읽은 글자 원문 (원본 요청에서 꺼냄, 화면 표시용)
+    @property
+    def call_number_text(self) -> str | None:
+        return (self.raw_payload or {}).get("call_number_text")
+
+    @property
+    def title_text(self) -> str | None:
+        return (self.raw_payload or {}).get("title_text")
+
+    @property
+    def text_fragments(self) -> list[str]:
+        return (self.raw_payload or {}).get("text_fragments") or []
 
 
 class ObservationCandidate(Base):

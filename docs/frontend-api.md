@@ -54,7 +54,7 @@
 | 서가 | `^[A-Z]-\d{2}$` | `A-03` | 구역 A의 3번 서가. `zone`은 앞 글자 |
 | 칸 | `^[A-Z]-\d{2}-\d{2}$` | `A-03-02` | 서가 ID + 칸 번호. `position`은 1부터 |
 | 도서(서지) | 정수 | `30` | 같은 책 제목 단위 |
-| 복본 | `^BOOK-\d+$` | `BOOK-125` | **실제 책 한 권.** 위치·판정은 모두 복본 기준 |
+| 복본 | 도서관 등록번호 `^EM\d+$` (예전 형식 `BOOK-\d+`도 허용) | `EM0223782` | **실제 책 한 권.** 위치·판정은 모두 복본 기준 |
 | 스캔 세션 | `SCAN-…` | `SCAN-20261030032958-e5ff26` | 백엔드가 생성 |
 | 관측 | `OBS-…` | `OBS-20261030032958-e5ff26-003` | AI가 생성. 책등 1개를 1번 본 기록 |
 | 검증 결과 | 정수 | `1238` | 판정 1건. 결과 상세 화면의 기준 ID |
@@ -129,6 +129,36 @@
 
 목록의 항목 1개와 같은 형식입니다. 진행률과 집계는 들어 있지 않습니다(→ 6장).
 
+### 3-4-1. 세션 사진과 OCR 진행 상태 — `GET /scan-sessions/{session_id}/images` [구현됨]
+
+로봇이 백엔드에 올린 사진 목록입니다 (칸 → 촬영 시각 순). 사진마다 AI OCR이 끝나면 책 결과가 생깁니다.
+
+```json
+[
+  {
+    "id": "IMG-20261123073012-a1b2c3",
+    "scan_session_id": "SCAN-20261123072900-9f8e7d",
+    "slot_id": "R-01-01",
+    "image_ref": "scans/SCAN-20261123072900-9f8e7d/IMG-20261123073012-a1b2c3.jpg",
+    "image_url": "/scan-images/IMG-20261123073012-a1b2c3/file",
+    "image_width": 1280, "image_height": 720,
+    "captured_at": "2026-11-23T07:30:00Z", "received_at": "2026-11-23T07:30:12Z",
+    "ocr_status": "DONE", "ocr_error": null, "book_count": 21,
+    "ocr_completed_at": "2026-11-23T07:30:41Z"
+  }
+]
+```
+
+| `ocr_status` | 화면 의미 |
+|---|---|
+| `PENDING` | AI 대기 중 |
+| `PROCESSING` | AI 분석 중 (사진 1장 약 30초) |
+| `DONE` | 분석 끝. `book_count`권 결과가 order-check·verifications에 나옴 |
+| `FAILED` | 분석 실패 (`ocr_error`에 이유). 관리자가 `POST /scan-images/{id}/retry-ocr`(관리자 토큰)로 다시 요청 |
+
+- 사진 파일: `GET /scan-images/{id}/file` (관측의 `image_url`과 같은 파일)
+- 진행 중 화면은 이 목록을 몇 초마다 다시 불러 `DONE`이 되면 결과를 갱신하면 됩니다.
+
 ### 3-5. 세션 결과 목록 — `GET /verifications?scan_session_id=…&slot_id=…&latest_only=true&limit=100` [구현됨]
 
 `id` 내림차순입니다.
@@ -195,7 +225,11 @@
   "shelf_id": "A-03",
   "slot_id": "A-03-05",
   "detected_text": "로봇공학 입문",
+  "call_number_text": "811.36 김66로 c.2",
+  "title_text": "로망에의 동물학적 접근",
+  "text_fragments": [],
   "reported_book_copy_id": "BOOK-201",
+  "match_method": "EXACT",
   "detection_confidence": 0.97,
   "ocr_confidence": 0.9,
   "identification_confidence": 0.88,
@@ -234,6 +268,19 @@
   "physical_location_confirmed_at": null
 }
 ```
+
+**관측의 OCR·매칭 필드 [구현됨]**
+
+| 필드 | 의미 |
+|---|---|
+| `call_number_text`, `title_text` | AI가 OCR로 읽은 청구기호·서명 원문 (없으면 null) |
+| `text_fragments` | AI가 읽은 글자 조각 원문 (없으면 `[]`) |
+| `match_method` | 백엔드가 글자로 복본을 찾은 방법: `EXACT` 정확히 일치, `SAME_BOOK` 같은 책(복본 미확정), `SIMILAR` 비슷한 청구기호, `TITLE` 서명으로만, `FRAGMENTS` 글자 조각, `NONE` 못 찾음. AI가 등록번호를 직접 보냈으면 null |
+| `reported_book_copy_id` | 확정한 복본 (못 하면 null → `candidates` 참고) |
+| `bbox` | 원본 이미지 픽셀 `[x, y, width, height]`, 왼쪽 위 원점. 화면 크기에 맞출 때 `image_width`·`image_height`로 비율 계산 |
+| `order` | 사진 안 왼쪽부터 순번 |
+
+> 사진 한 장의 책등 박스·흐름 판정은 `GET /scan-sessions/{id}/slots/{slot_id}/order-check` 한 번으로 받을 수 있습니다 (사진별 `image_url`, 크기, 책마다 `bbox`·`status`·`observation_id`). 책등을 클릭하면 `observation_id`로 위 관측 상세를 부르면 됩니다.
 
 > 결과 목록에는 `title`이 들어 있으므로 목록 화면에서는 `/copies`를 부를 필요가 없습니다. 상세 화면에서만 부르세요.
 
@@ -366,6 +413,8 @@
 | `OUT_OF_PLACE` | 엉뚱한 책. 흐름상 앞·뒤 책과 분류번호 앞 3자리가 다름. `neighbors`에 앞뒤 청구기호(판단 근거)가 옴 |
 | `UNIDENTIFIED` | 청구기호를 알 수 없어 검사에서 뺌 |
 | `DUPLICATE` | 겹쳐 찍은 사진에서 앞 사진과 같은 책. 한 권으로 보고 검사에서 뺌. `duplicate_of`에 처음 본 관측 ID (화면에서는 흐리게 표시하거나 숨기면 됨) |
+
+> **`inferred: true`**: 후보가 여러 책이라 백엔드가 복본을 못 정했지만, 1등과 점수가 비슷한 후보 중 앞뒤 책 사이에 들어가는 책으로 **추정**한 경우입니다. `book_copy_id`는 null이고 `call_number`·`title`은 추정값입니다. 화면에 "추정" 표시를 붙여 주세요.
 
 ```json
 {"scan_session_id": "SCAN-…", "shelf_id": "A-01", "out_of_order_count": 1, "out_of_place_count": 1,

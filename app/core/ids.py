@@ -16,6 +16,7 @@ BOOK_COPY_ID_PATTERN = r"^(?:[A-Z]{2,4}\d{5,10}|BOOK-\d+)$"
 OBSERVATION_ID_PATTERN = r"^OBS-[A-Za-z0-9_-]+$"  # OBS-001 (AI가 생성)
 SCAN_SESSION_ID_PATTERN = r"^SCAN-[A-Za-z0-9_-]+$"
 TASK_ID_PATTERN = r"^TASK-[A-Za-z0-9_-]+$"        # 백엔드가 생성
+SCAN_IMAGE_ID_PATTERN = r"^IMG-[A-Za-z0-9_-]{1,40}$"  # 로봇이 올린 사진 (로봇이 정하거나 백엔드가 생성)
 
 RobotId = Annotated[str, StringConstraints(pattern=ROBOT_ID_PATTERN)]
 ShelfId = Annotated[str, StringConstraints(pattern=SHELF_ID_PATTERN)]

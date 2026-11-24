@@ -22,6 +22,7 @@ from app.routers import (
     health,
     observations,
     robots,
+    scan_images,
     scan_sessions,
     shelves,
     tasks,
@@ -56,6 +57,7 @@ app.include_router(copies.router)
 app.include_router(shelves.router)
 app.include_router(call_ranges.router)
 app.include_router(scan_sessions.router)
+app.include_router(scan_images.router)
 app.include_router(observations.router)
 app.include_router(verifications.router)
 app.include_router(robots.router)

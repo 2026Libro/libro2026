@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     # 실제 보관 방식(AI 서버 공유 폴더, 백엔드 업로드 등)은 AI 담당자와 협의 후 정한다.
     image_root: str = "data/images"
 
+    # 사진 흐름 (2026-11-23): 로봇 → 백엔드(사진 저장) → AI OCR → 백엔드(매칭·판정)
+    # [가정] AI OCR 서버 주소. 비워 두면 백엔드가 AI를 부르지 않고, AI가 POST /scan-images/{id}/ocr-result로
+    # 결과를 보내 줄 때까지 사진이 PENDING으로 남는다. 요청·응답 형식은 docs/ai-integration.md 참고.
+    ai_ocr_url: str = ""
+    ai_ocr_api_key: str = ""                 # AI 서버가 요구하면 X-API-Key 헤더로 보냄
+    ai_ocr_timeout_seconds: float = 120.0    # 실제 OCR이 사진 1장에 약 30초 (2026-11-16 측정)
+    max_image_bytes: int = 20 * 1024 * 1024  # 업로드 사진 최대 크기
+    ocr_default_detection: float = 0.9       # [가정] AI가 책등 탐지 신뢰도를 안 주면 쓰는 값
+
     # [가정] 로봇 통신 기준. 로봇 담당자와 상태 보고 주기를 협의 후 조정한다.
     robot_offline_after_seconds: int = 60    # 마지막 통신 후 이 시간이 지나면 OFFLINE, 진행 중 작업은 UNKNOWN
     task_watchdog_interval_seconds: int = 10 # 위 검사를 서버가 몇 초마다 할지

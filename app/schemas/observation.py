@@ -108,6 +108,9 @@ class ObservationRead(BaseModel):
     shelf_id: str
     slot_id: str
     detected_text: str | None
+    call_number_text: str | None = Field(description="AI가 OCR로 읽은 청구기호 원문")
+    title_text: str | None = Field(description="AI가 OCR로 읽은 서명 원문")
+    text_fragments: list[str] = Field(description="AI가 OCR로 읽은 글자 조각들 원문")
     reported_book_copy_id: str | None
     match_method: str | None
     detection_confidence: float

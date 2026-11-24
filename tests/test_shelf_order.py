@@ -282,3 +282,24 @@ def test_analysis_complete_records_duplicate(client, shelf_env):
     assert res.status_code == 200 and res.json()["out_of_place_count"] == 0, res.text
     page = client.get("/verifications", params={"scan_session_id": shelf_env["session_id"], "limit": 100}).json()
     assert {v["observation_id"]: v["sequence_status"] for v in page["items"]}[dup["id"]] == "DUPLICATE"
+
+
+# ---------- 5. 못 정한 책: 앞뒤 책 순서로 추정 ----------
+
+def test_ambiguous_book_inferred_from_neighbors(client, shelf_env):
+    observe(client, shelf_env, 1, "EM9800001")                                               # 김54ㄱ
+    observe(client, shelf_env, 2, candidates=[("EM9800005", 0.82), ("EM9800004", 0.80)])     # 823(1등) vs 김55ㄷ
+    observe(client, shelf_env, 3, "EM9800006")                                               # 박1ㄱ
+    books = order_check(client, shelf_env)["images"][0]["books"]
+    assert (books[1]["call_number"], books[1]["status"], books[1]["inferred"]) == ("811.16 김55ㄷ", "IN_ORDER", True)
+    assert books[1]["book_copy_id"] is None and books[0]["inferred"] is False
+
+
+def test_no_inference_when_no_candidate_fits(client, shelf_env):
+    observe(client, shelf_env, 1, "EM9800001")
+    observe(client, shelf_env, 2, candidates=[("EM9800005", 0.8), ("EM9800007", 0.8)])      # 823 vs 330: 둘 다 안 맞음
+    observe(client, shelf_env, 3, "EM9800006")
+    observe(client, shelf_env, 4, candidates=[("EM9800004", 0.9), ("EM9800005", 0.7)])      # 점수 차 커서 1등 그대로
+    books = order_check(client, shelf_env)["images"][0]["books"]
+    assert (books[1]["status"], books[1]["inferred"]) == ("UNIDENTIFIED", False)
+    assert (books[3]["call_number"], books[3]["inferred"]) == ("811.16 김55ㄷ", False)   # 원래 규칙대로 1등 책

@@ -5,12 +5,14 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.enums import DeviceType
 from app.core.ids import SHELF_ID_PATTERN, SLOT_ID_PATTERN
-from app.core.security import require_admin, require_device
+from app.core.errors import AppError
+from app.core.security import require_admin_or_robot, require_device
 from app.db.session import get_db
 from app.models import DeviceCredential
-from app.schemas.common import Page
+from app.schemas.common import ErrorCode, Page
 from app.schemas.scan_session import ScanSessionCreate, ScanSessionFinish, ScanSessionRead
 from app.schemas.verification import ShelfOrderCheck, SlotOrderCheck, UnobservedCheckResult
+from app.services import scan_image as scan_image_service
 from app.services import scan_session as scan_service
 from app.services import shelf_order as shelf_order_service
 from app.services import verification as verification_service
@@ -19,8 +21,16 @@ router = APIRouter(prefix="/scan-sessions", tags=["scan-sessions"])
 
 
 @router.post("", response_model=ScanSessionRead, status_code=status.HTTP_201_CREATED)
-def create_session(data: ScanSessionCreate, db: Session = Depends(get_db), _admin: str = Depends(require_admin)):
-    """서가 1개 촬영 세션 시작. 응답의 id를 로봇·AI가 관측 데이터에 scan_session_id로 넣는다."""
+def create_session(data: ScanSessionCreate, db: Session = Depends(get_db),
+                   caller: tuple[str, str] = Depends(require_admin_or_robot)):
+    """서가 1개 촬영 세션 시작 (관리자 토큰 또는 로봇 API 키). 응답의 id로 사진을 올린다.
+
+    로봇 키로 만들 때는 robot_id가 키의 로봇과 같아야 한다 (자기 세션만 열 수 있음).
+    """
+    kind, who = caller
+    if kind == "ROBOT" and data.robot_id != who:
+        raise AppError(ErrorCode.FORBIDDEN, f"로봇 '{who}'의 키로 로봇 '{data.robot_id}'의 세션을 만들 수 없습니다.",
+                       status_code=403)
     return scan_service.create_session(db, data)
 
 
@@ -29,10 +39,17 @@ def finish_session(
     session_id: str,
     data: ScanSessionFinish,
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
     robot: DeviceCredential = Depends(require_device(DeviceType.ROBOT)),
 ):
-    """로봇이 촬영 종료를 보고한다. COMPLETED여야 6단계에서 미관측 판정을 한다."""
-    return scan_service.finish_session(db, session_id, data, robot_id=robot.device_id)
+    """로봇이 촬영 종료를 보고한다. COMPLETED여야 6단계에서 미관측 판정을 한다.
+
+    사진을 백엔드에 올린 세션(POST /scan-sessions/{id}/images)은 사진 OCR이 모두 끝나 있으면 여기서 바로,
+    아니면 마지막 사진 OCR이 끝날 때 백엔드가 분석 완료(미관측 판정·흐름 검사)를 처리한다.
+    """
+    result = scan_service.finish_session(db, session_id, data, robot_id=robot.device_id)
+    scan_image_service.complete_if_ready(db, session_id, settings)
+    return result
 
 
 @router.post(

@@ -60,6 +60,8 @@ class SlotOrderBook(BaseModel):
                                  description="이탈한 책이면 흐름상 앞·뒤 책의 청구기호 (판단 근거)")
     duplicate_of: str | None = Field(default=None,
                                      description="DUPLICATE면 같은 책으로 본 앞 사진의 관측 ID")
+    inferred: bool = Field(default=False,
+                           description="후보가 여러 책이라 못 정했는데, 앞뒤 책 순서에 맞는 후보로 추정한 청구기호면 true")
 
 
 class SlotOrderImage(BaseModel):

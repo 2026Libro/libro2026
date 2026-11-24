@@ -10,6 +10,7 @@
 4. 비교 청구기호: 식별된 복본의 청구기호. 복본 미확정이면 1등 후보 책의 청구기호(c.N 뗀 값)를 쓰되,
    다른 책 후보와 점수 차가 CANDIDATE_MARGIN 미만이면 UNIDENTIFIED로 두고 흐름 계산에서 뺀다.
 5. 재관측으로 대체된 관측은 빼고 최신 관측만 쓴다. image_ref·order가 없는 관측은 위치를 몰라 제외.
+   못 정한 책은 1등과 점수 차가 작은 후보 중 앞뒤 책 사이에 들어가는 후보로 추정한다 (inferred=true).
 6. 한 칸을 여러 장으로 겹쳐 찍어 다음 사진 앞부분에 같은 책이 다시 나오면 DUPLICATE로 두고 흐름 계산에서 뺀다.
 
 조회 API는 요청 때마다 계산한다. AI 분석 완료 시점에는 결과를 검증 결과(sequence_status)에 기록하고,
@@ -21,7 +22,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.core.call_number import class_division, out_of_order
+from app.core.call_number import class_division, out_of_order, sort_key
 from app.core.enums import ShelfOrderStatus, WorkflowStatus
 from app.models import Book, BookCopy, Observation, ShelfSlot, VerificationResult
 from app.schemas.verification import ShelfOrderCheck, SlotOrderBook, SlotOrderCheck, SlotOrderImage
@@ -31,6 +32,7 @@ from app.services.scan_session import get_session
 OUT_OF_PLACE_DIGITS = 3   # [가정] 분류번호 앞 몇 자리가 다르면 '엉뚱한 책'으로 볼지 (3 = KDC 강목)
 CANDIDATE_MARGIN = 0.05   # [가정] 후보가 여러 책일 때 1등이 다른 책보다 이만큼 높으면 1등 책으로 흐름 판단
 MAX_OVERLAP = 10          # [가정] 겹쳐 찍은 두 사진에서 겹칠 수 있는 최대 권수
+NEIGHBOR_TIE = 0.06       # [가정] 못 정한 책에서 1등과 이만큼 차이 나는 후보까지 앞뒤 책 순서로 골라 본다
 
 
 @dataclass
@@ -64,6 +66,44 @@ def _reference(obs: Observation, identified: str | None, copies: dict[str, BookC
     if rival is None or ranked[0].score - rival.score >= CANDIDATE_MARGIN:
         return base_call_number(top.call_number), top.book.title
     return None, None
+
+
+def _infer_from_neighbors(entries: list[_Entry], copies: dict[str, BookCopy]) -> None:
+    """후보가 여러 책이라 청구기호를 못 정한 책: 1등과 점수 차가 NEIGHBOR_TIE 이내인 후보 중
+    앞·뒤 책(청구기호를 아는 가장 가까운 책) 사이에 들어가는 책을 고른다. inferred=True로 표시한다.
+
+    맞는 후보가 없으면 UNIDENTIFIED 그대로 둔다. 흐름에 맞는 후보만 고르므로 엉뚱한 책을 숨기지 않는다
+    (원래 판단할 수 없던 책을 '제자리일 가능성이 높음'으로 바꿀 뿐).
+    고른 책이 다음 책의 앞 이웃이 되도록 왼쪽부터 한 권씩 정한다.
+    """
+    for i, e in enumerate(entries):
+        if e.book.call_number or not e.obs.candidates:
+            continue
+        ranked = sorted((c for c in e.obs.candidates if c.book_copy_id in copies and copies[c.book_copy_id].call_number),
+                        key=lambda c: (c.rank, c.book_copy_id))
+        if not ranked:
+            continue
+        close = [c for c in ranked if ranked[0].score - c.score <= NEIGHBOR_TIE]
+        before = next((x.book.call_number for x in reversed(entries[:i]) if x.book.call_number), None)
+        after = next((x.book.call_number for x in entries[i + 1:] if x.book.call_number), None)
+        if before is None and after is None:
+            continue
+        fits = []
+        for c in close:
+            call = base_call_number(copies[c.book_copy_id].call_number)
+            if not ((before is None or sort_key(before) <= sort_key(call))
+                    and (after is None or sort_key(call) <= sort_key(after))):
+                continue
+            # 이웃이 한쪽뿐이면 범위가 열려 있으므로, 그 이웃과 같은 분류(앞 3자리)인 후보만 인정한다
+            only = before if after is None else after if before is None else None
+            if only and class_division(only, OUT_OF_PLACE_DIGITS) != class_division(call, OUT_OF_PLACE_DIGITS):
+                continue
+            fits.append((c, call))
+        if fits:
+            # 점수가 높은 후보 → 같은 점수면 앞 책에 가장 가까운(청구기호가 가장 작은) 후보
+            c, call = min(fits, key=lambda f: (-f[0].score, sort_key(f[1])))
+            e.book.call_number, e.book.title, e.book.inferred = call, copies[c.book_copy_id].book.title, True
+            e.book.status = ShelfOrderStatus.IN_ORDER
 
 
 def _same_book(a: SlotOrderBook, b: SlotOrderBook) -> bool:
@@ -137,6 +177,7 @@ def _evaluate(db: Session, session_id: str) -> list[_Entry]:
             title=title, bbox=obs.bbox,
             status=ShelfOrderStatus.IN_ORDER if call_number else ShelfOrderStatus.UNIDENTIFIED)))
 
+    _infer_from_neighbors(entries, copies)
     _mark_overlaps(entries)
     known = [e for e in entries if e.book.call_number and e.book.status is not ShelfOrderStatus.DUPLICATE]
     wrong = out_of_order([e.book.call_number for e in known])

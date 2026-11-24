@@ -46,6 +46,7 @@ def test_match(call, title, method, copy_id, first_candidate):
 def test_observation_with_text_only_is_matched(client, shelf_env):
     exact = observe(client, shelf_env, 1, call_number_text="811.16 김54ㄱ c.2")
     assert (exact["reported_book_copy_id"], exact["match_method"]) == ("EM9800002", "EXACT")
+    assert (exact["call_number_text"], exact["title_text"], exact["text_fragments"]) == ("811.16 김54ㄱ c.2", None, [])
 
     same = observe(client, shelf_env, 2, call_number_text="811.16 김542ㄴ")                     # 1권뿐 → 확정
     typo = observe(client, shelf_env, 3, call_number_text="811.16 김5ㄷ", title_text="책 811.16 김55ㄷ")

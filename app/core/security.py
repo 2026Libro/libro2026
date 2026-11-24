@@ -64,3 +64,20 @@ def require_device(*allowed: DeviceType) -> Callable[..., DeviceCredential]:
         return cred
 
     return dependency
+
+
+def require_admin_or_robot(
+    token: str | None = Security(admin_token_header),
+    api_key: str | None = Security(device_key_header),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+) -> tuple[str, str]:
+    """관리자 토큰 또는 로봇 API 키. ("ADMIN", 관리자ID) 또는 ("ROBOT", 로봇ID)를 돌려준다.
+
+    로봇이 촬영 명령을 직접 실행하면서 자기 세션을 여는 경우에 쓴다 (2026-11-24).
+    """
+    if token:
+        return "ADMIN", require_admin(token, settings)
+    if api_key:
+        return "ROBOT", require_device(DeviceType.ROBOT)(api_key, db).device_id
+    raise AppError(ErrorCode.UNAUTHORIZED, "관리자 토큰 또는 로봇 API 키가 필요합니다.", status_code=401)

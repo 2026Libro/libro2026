@@ -134,6 +134,15 @@ class LocationCertainty(StrEnum):
     ESTIMATED = "ESTIMATED"
 
 
+class OcrStatus(StrEnum):
+    """로봇이 올린 사진 1장의 AI OCR 처리 상태."""
+
+    PENDING = "PENDING"          # AI에 보내기 전 (AI 서버 주소가 없으면 AI가 결과를 보내 줄 때까지 이 상태)
+    PROCESSING = "PROCESSING"    # AI가 처리 중
+    DONE = "DONE"                # 결과를 받아 책마다 관측을 만듦
+    FAILED = "FAILED"            # AI 호출 실패 또는 결과 형식 오류 (관리자가 다시 시도 가능)
+
+
 class ScanSessionStatus(StrEnum):
     """스캔 세션 진행 상태 (BE-007). [가정]"""
 

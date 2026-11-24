@@ -105,6 +105,7 @@ def test_observation_with_fragments_only_is_matched(client, shelf_env):
     obs = observe(client, shelf_env, 1, text_fragments=["000", "811.16", "김55ㄷ"])
     assert (obs["match_method"], obs["reported_book_copy_id"]) == ("FRAGMENTS", "EM9800004")
     assert obs["identification_confidence"] > 0.7
+    assert obs["text_fragments"] == ["000", "811.16", "김55ㄷ"]          # 화면 표시용 원문
 
 
 def test_fragments_used_when_call_number_text_finds_nothing(client, shelf_env):
@@ -124,3 +125,21 @@ def test_fragments_feed_the_flow_check(client, shelf_env):
 
 def test_too_many_fragments_rejected(client, shelf_env):
     observe(client, shelf_env, 1, text_fragments=["x"] * 31, expect=422)
+
+
+# ---------- AI OCR 출력 텍스트 읽기 (scripts.import_ocr_results) ----------
+
+def test_read_ai_text():
+    from scripts.import_ocr_results import read_ai_text
+    rows = read_ai_text("""========== 1116t1.png ==========
+
+ID 001 - 012 한국인넷백서 요약본(80.9%), 2013한국인터넷백서(100.0%), 004,50951(93.8%), 평55번(67.0%)
+ID 016 - Web Korea 2010 Annual(89.9%), 20% 대 수학 수(56.1%), 000(97.0%)
+
+================================
+추정 책 그룹: 21개
+""")
+    assert [r["order"] for r in rows] == [1, 16] and {r["image"] for r in rows} == {"1116t1.png"}
+    assert rows[0]["fragments"] == ["012 한국인넷백서 요약본", "2013한국인터넷백서", "004,50951", "평55번"]
+    assert rows[1]["fragments"] == ["Web Korea 2010 Annual", "20% 대 수학 수", "000"]
+    assert rows[0]["confidence"] == round((0.809 + 1.0 + 0.938 + 0.67) / 4, 3)
